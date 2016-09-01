@@ -1,0 +1,9 @@
+div#em-event-seatsio-chart label {
+	min-width: 150px;
+	font-weight: bold;
+	line-height: 27px;
+	display: inline-block;
+}
+div#em-event-seatsio-chart span {
+	line-height: 27px;
+}
