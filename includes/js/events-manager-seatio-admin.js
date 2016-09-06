@@ -1,4 +1,5 @@
 jQuery(document).ready(function($) {
+    var event_data = null;
     var EM_Seatsio_Event = function() {
         var self = this;
         self.selected_objects = [];
@@ -27,17 +28,49 @@ jQuery(document).ready(function($) {
         };
         self.updateSeats = function(response) {
             $("#chart-blocked").text('');
-            if (response.seats && response.seats.blocked) {
+            if (response.seats) {
                 var labels = [];
-                $.each(response.seats.blocked, function(index, value) {
-                    labels.push(value.objectType + ' ' + value.label);
+                $.each(response.seats, function(index, value) {
+                    if (value.status == 'blocked') labels.push(value.objectType + ' ' + value.label);
                 });
                 $("#chart-blocked").text(labels.join(', '));
             }
         };
-        self.init = function() {
-            var post_id = parseInt($("input[type=hidden][name=post_ID]").val()) || 0;
-            jQuery.ajax({
+        self.get_seatsio_category_from_ticket = function(ticket_id) {
+            var ret = null;
+            $.each(event_data.tickets, function(index, row) {
+                if (row.ticket_id == ticket_id) ret = row.meta.seatsio_category;
+            });
+            return ret;
+        };
+        self.get_seat_button = function(object) {
+            return ' <a href="#" class="button seatsio-seat" data-uuid="' + object.uuid + '">' + object.label + '<input type="hidden" name="em_seatsio_bookings[' + object.uuid + ']" value="' + object.label + '"></a> ';
+        };
+        self.udpateSeatsListeners = function() {
+            $("a.seatsio-seat").off().on('click', function() {
+                if (self.is_editing_booking()) {
+                    $(this).remove();
+                    self.udpateSeatsListeners();
+                } else {
+                    alert('Please, click "Modify Booking" first.');
+                }
+                return false;
+            });
+            $('table.em-tickets-bookings-table tbody tr').each(function() {
+                var num = $("a.seatsio-seat", this).length;
+                $("input.em-ticket-select", this).val(num);
+            });
+        };
+        self.is_editing_booking = function() {
+            if ($("body").hasClass('event_page_events-manager-bookings') && $('.em-booking-single-edit').length > 0) {
+                var d = $('.em-booking-single-edit').css('display');
+                if (d === 'block') return true;
+            }
+            return false;
+        };
+        self.init = function(post_id) {
+            if (!post_id) post_id = parseInt($("input[type=hidden][name=post_ID]").val()) || 0;
+            if (post_id) jQuery.ajax({
                 dataType: "json",
                 url: ajaxurl,
                 method: 'post',
@@ -50,6 +83,33 @@ jQuery(document).ready(function($) {
                 },
                 success: function(response) {
                     if (response && response.event_key) {
+                        event_data = response;
+                        if ($("body").hasClass('event_page_events-manager-bookings') && $('table.em-tickets-bookings-table').length > 0) {
+                            $('table.em-tickets-bookings-table thead th:first').after('<th>Seats.io seats (click to remove from booking)</th>');
+                            var booking_id = $("input[name=booking_id]").val();
+                            if (event_data.bookings && event_data.bookings[booking_id]) {
+                                var bookings = event_data.bookings[booking_id];
+                            }
+                            $('table.em-tickets-bookings-table tbody tr').each(function() {
+                                var name = $("input.em-ticket-select", this).attr('name');
+                                if (name) {
+                                    var bookings_btns = [];
+                                    name = parseInt(name.match(/\d+/)) || 0;
+                                    if (bookings && bookings[name]) {
+                                        var current_booking = bookings[name];
+                                        $.each(current_booking, function(index, uuid) {
+                                            bookings_btns.push(self.get_seat_button(event_data.seats[uuid]));
+                                        });
+                                    }
+                                    bookings_btns = bookings_btns.join(' ');
+                                    $("td.ticket-type", this).after('<td data-seatsio-category="' + self.get_seatsio_category_from_ticket(name) + '">' + bookings_btns + '</td>');
+                                    self.udpateSeatsListeners();
+                                }
+                            });
+                            $('table.em-tickets-bookings-table tfoot tr').each(function() {
+                                $("th:first", this).after('<th></th>');
+                            });
+                        }
                         $("div#em-event-where").before('<div id="em-event-seatsio-chart" class="postbox"><h2 class="hndle">Seats.io Chart</h2><div class="inside"><div id="seatsio-chart"></div>' + '<div><label>Blocked:</label><span id="chart-blocked"></span></div><div><label>Selected:</label><span id="chart-selected"></span></div><div>' + '<label>Fake Reservation:</label> <button class="button" id="seatsio_btn_block">Block Selected</button> <button class="button" id="seatsio_btn_release">Release Selected</button>' + '</div>' + '</div></div>');
                         jQuery.getScript('https://app.seats.io/chart.js', function() {
                             var chart = new seatsio.SeatingChart({
@@ -57,12 +117,22 @@ jQuery(document).ready(function($) {
                                 publicKey: response.public_key,
                                 event: response.event_key,
                                 onObjectSelected: function(object) {
+                                    if (self.is_editing_booking()) {
+                                        $("td[data-seatsio-category=" + object.category.key + "]").append(self.get_seat_button(object));
+                                        self.udpateSeatsListeners();
+                                        return;
+                                    }
                                     if (!self.isObjectSelected(object)) {
                                         self.selected_objects.push(object);
                                     }
                                     self.updateSelectedObjects();
                                 },
                                 onObjectDeselected: function(object) {
+                                    if (self.is_editing_booking()) {
+                                        $("a[data-uuid=" + object.uuid + "]").remove();
+                                        self.udpateSeatsListeners();
+                                        return;
+                                    }
                                     if (self.isObjectSelected(object)) {
                                         self.removeSelectedObject(object);
                                     }
@@ -75,10 +145,7 @@ jQuery(document).ready(function($) {
                                     return defaultColor;
                                 },
                                 tooltipText: function(object) {
-                                    if (object.status === 'blocked') {
-                                        return 'Blocked';
-                                    }
-                                    return '';
+                                    return event_data.seats[object.uuid].publicLabel;
                                 },
                                 isObjectSelectable: function(object) {
                                     if (object.status === 'free') return true;
@@ -217,24 +284,25 @@ jQuery(document).ready(function($) {
                                             }
                                             if (has_ticket === false) {
                                                 var seats = categorySums[value.key] ? categorySums[value.key] : 0;
-                                                if(seats > 0) {
-                                                $("a#em-tickets-add").trigger('click');
-                                                var tbody = $("#em-tickets-form table.form-table tbody:last")[0];
-                                                var $ticket_name_input = $("input.ticket_name", tbody);
-                                                $ticket_name_input.val(value.label);
-                                                var name = $ticket_name_input.attr('name');
-                                                $ticket_name_input.after('<input type="hidden" name="' + name.replace('ticket_name', 'ticket_meta_seatsio_category') + '" class="ticket_meta_category" value="' + value.key + '"/>');
-                                                $ticket_name_input.after('<input type="hidden" name="' + name.replace('ticket_name', 'ticket_meta_seatsio_chart') + '" class="ticket_meta_chart" value="' + chart_key + '"/>');
-                                                var text = value.label,
-                                                    regex = /\$\s*[0-9,.]+(?:\s*\.\s*\d{2})?/g,
-                                                    match = text.match(regex);
-                                                if (match) {
-                                                    match = match[0].replace(/\s/g, "").replace('$', '');
-                                                } else match = 0;
-                                                $("input.ticket_price",tbody).val(match);
-                                                $("input.ticket_spaces",tbody).val(seats);
-                                                $("span.ticket_available_spaces",tbody).text(seats);
-                                                $(".ticket-actions-edited", tbody).trigger('click');
+                                                if (seats > 0) {
+                                                    $("a#em-tickets-add").trigger('click');
+                                                    var tbody = $("#em-tickets-form table.form-table tbody:last")[0];
+                                                    var $ticket_name_input = $("input.ticket_name", tbody);
+                                                    var name = $ticket_name_input.attr('name');
+                                                    $ticket_name_input.after('<input type="hidden" name="' + name.replace('ticket_name', 'ticket_meta_seatsio_category') + '" class="ticket_meta_category" value="' + value.key + '"/>');
+                                                    $ticket_name_input.after('<input type="hidden" name="' + name.replace('ticket_name', 'ticket_meta_seatsio_chart') + '" class="ticket_meta_chart" value="' + chart_key + '"/>');
+                                                    var text = value.label,
+                                                        regex = /\$\s*[0-9,.]+(?:\s*\.\s*\d{2})?/g,
+                                                        match = text.match(regex);
+                                                    if (match) {
+                                                        match = match[0].replace(/\s/g, "").replace('$', '');
+                                                    } else match = 0;
+                                                    value.label = value.label.replace(regex, '');
+                                                    $ticket_name_input.val(value.label);
+                                                    $("input.ticket_price", tbody).val(match);
+                                                    $("input.ticket_spaces", tbody).val(seats);
+                                                    $("span.ticket_available_spaces", tbody).text(seats);
+                                                    $(".ticket-actions-edited", tbody).trigger('click');
                                                 }
                                             }
                                         });
@@ -259,4 +327,43 @@ jQuery(document).ready(function($) {
     EMS_location.init();
     var EMS_event = new EM_Seatsio_Event();
     EMS_event.init();
+    //events-manager-bookings
+    //validate seats event exists
+    if ($("body").hasClass('event_page_events-manager-bookings')) {
+        var event_id = $("input[name=event_id]").val();
+        if (event_id) {
+            jQuery.ajax({
+                dataType: "json",
+                url: ajaxurl,
+                method: 'post',
+                data: {
+                    event_id: event_id,
+                    action: 'em_seatsio_has_event'
+                },
+                error: function(xhr, status, error) {
+                    console.log(status);
+                },
+                success: function(response) {
+                    if (response) {
+                        if (response.success === true) {
+                            console.log('We have event key', response.event_key);
+                            //lets show the chart
+                            //name="booking_comment"
+                            if ($("div#em-booking-notes").length > 0) {
+                                $("div#em-booking-notes").before('<div id="em-event-where"></div>');
+                                EMS_event.init(response.post_id);
+                            }
+                            if ($(".em-bookings-table").length > 0) {
+                                $(".em-bookings-table").after('<div style="margin-top:20px;">&nbsp;</div><div id="em-event-where"></div>');
+                                EMS_event.init(response.post_id);
+                            }
+                        } else {
+                            console.log('Not event key');
+                            $("#wpbody-content h1").after('<div class="notice notice-error is-dismissible"><p><strong>Seats.io Event Key not set for this event. Update Event to create Event Key.</strong></p></div>');
+                        }
+                    }
+                }
+            });
+        }
+    }
 });

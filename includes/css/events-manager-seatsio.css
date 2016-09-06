@@ -1,0 +1,7 @@
+div.em-seatsio-tickets-chart table, div.em-seatsio-tickets-chart th, div.em-seatsio-tickets-chart td {
+	border: none;
+}
+div.em-seatsio-tickets-chart table a {
+	text-decoration: none;
+	box-shadow: none;
+}

@@ -10,10 +10,10 @@ Version: 0.0.1
 Copyright (C) 2016
  */
 
-define('EM_SEATSIO_VERSION', 0.02);
-define('EM_MIN_VERSION', 5.63);
-define('EM_MIN_VERSION_CRITICAL', 2.377);
-define('EM_SLUG', plugin_basename(__FILE__));
+define('EM_SEATSIO_VERSION', 0.04);
+define('EM_SEATSIO_MIN_VERSION', 0.04);
+define('EM_SEATSIO_MIN_VERSION_CRITICAL', 0.04);
+define('EM_SEATSIO_SLUG', plugin_basename(__FILE__));
 
 require_once 'vendor/autoload.php';
 require_once 'Seatsio/SeatsioApiClient.php';
@@ -52,8 +52,11 @@ function em_seatsio_get_event()
     if (isset($_GET['post_id'])) {
         $post_id = (int) $_GET['post_id'];
     }
-
-    if ($response = EM_Seatsio::event_details($post_id)) {
+    $booking_id = isset($_POST['booking_id']) ? (int) $_POST['booking_id'] : 0;
+    if (isset($_GET['booking_id'])) {
+        $booking_id = (int) $_GET['booking_id'];
+    }
+    if ($response = EM_Seatsio::event_details($post_id,$booking_id)) {
         $options              = get_option('em_seatsio_settings');
         $response->public_key = $options["em_seatsio_public_key"];
         echo json_encode($response);
@@ -61,6 +64,28 @@ function em_seatsio_get_event()
     exit;
 }
 add_action('wp_ajax_em_seatsio_get_event', 'em_seatsio_get_event');
+
+function em_seatsio_has_event()
+{
+    global $wpdb;
+
+    $event_id = isset($_POST['event_id']) ? (int) $_POST['event_id'] : 0;
+    if (isset($_GET['event_id'])) {
+        $event_id = (int) $_GET['event_id'];
+    }
+    $response          = new stdClass();
+    $response->success = false;
+    if ($post_id = $wpdb->get_var("select post_id from " . EM_EVENTS_TABLE . " where event_id='" . $event_id . "' limit 1")) {
+        if ($event_key = $wpdb->get_var("SELECT event_key FROM " . EM_SEATSIO_EVENT . " WHERE post_id='" . $post_id . "' LIMIT 1")) {
+            $response->success   = true;
+            $response->event_key = $event_key;
+            $response->post_id   = $post_id;
+            $response->event_id  = $event_id;
+        }
+    }
+    wp_send_json($response);
+}
+add_action('wp_ajax_em_seatsio_has_event', 'em_seatsio_has_event');
 
 function em_seatsio_block_event()
 {
@@ -97,9 +122,12 @@ function em_seatsio_chart_details()
 }
 add_action('wp_ajax_em_seatsio_chart_details', 'em_seatsio_chart_details');
 
-function em_seatsio_get_post_ticket($ticket, $post=null)
+function em_seatsio_get_post_ticket($ticket, $post = null)
 {
-    if(empty($post)) return;
+    if (empty($post)) {
+        return;
+    }
+
     foreach ($post as $key => $value) {
         if (strpos($key, 'ticket_meta_') === 0) {
             $ticket->ticket_meta[str_replace('ticket_meta_', '', $key)] = $value;
@@ -115,16 +143,194 @@ function ticket_add_meta_inputs($col_count, $ticket)
     }
 }
 add_action('em_ticket_edit_form_fields', 'ticket_add_meta_inputs', 10, 2);
-
 add_action('em_ticket_get_post_pre', 'em_seatsio_get_post_ticket', 10, 2);
-add_action('em_location_get_post_pre', 'em_seatsio_get_post_ticket', 10, 2); //DUE to possible bug on wrong name on hook
+
+add_action('em_ticket_booking_save', array('EM_Seatsio', 'ticket_booking_save'), 10, 2);
+
+add_action('em_booking_set_status', array('EM_Seatsio', 'booking_set_status'), 10, 2);
 
 add_action('save_post', array('EM_Seatsio', 'save_post'), 1, 1); //set to 1 so metadata gets saved ASAP
 
+add_action('em_booking_get_post', array('EM_Seatsio', 'booking_get_post'), 10, 2);
+
+add_action('em_booking_delete', array('EM_Seatsio', 'booking_delete'), 10, 2);
+
 class EM_Seatsio
 {
+    public static function booking_delete($result, $EM_Booking)
+    {
+        if (!$result) {
+            return false;
+        }
+        global $wpdb;
 
-    public static function event_details($post_id)
+        $sql    = $wpdb->prepare("DELETE FROM " . EM_SEATSIO_BOOKING . " WHERE booking_id=%d", $EM_Booking->booking_id);
+        $result = $wpdb->query($sql);
+        return true;
+    }
+    public static function booking_get_post($result, $EM_Booking)
+    {
+        if (!$result) {
+            return false;
+        }
+        global $wpdb;
+
+        $event_id  = $EM_Booking->event_id;
+        $post_id   = $wpdb->get_var("select post_id from " . EM_EVENTS_TABLE . " where event_id='" . $event_id . "' limit 1");
+        $event_key = $wpdb->get_var("SELECT event_key FROM " . EM_SEATSIO_EVENT . " WHERE post_id='" . $post_id . "' LIMIT 1");
+
+        $client = EM_Seatsio::getAPIClient();
+        $seats  = $client->report($event_key, 'byUuid');
+
+        $tb = $EM_Booking->get_tickets_bookings();
+
+        $tb->rewind();
+        while ($tb->valid()) {
+            $ticket = $tb->current();
+            if (!empty($_POST['em_seatsio_bookings'])) {
+                foreach ($_POST['em_seatsio_bookings'] as $uuid => $label) {
+                    if (!empty($seats->$uuid)) {
+                        $seat = $seats->$uuid;
+                        if (!empty($ticket->ticket) && $seat->categoryKey == $ticket->ticket->ticket_meta['seatsio_category']) {
+                            if (empty($ticket->ticket->ticket_meta['seatsio_seats'])) {
+                                $ticket->ticket->ticket_meta['seatsio_seats'] = array();
+                            }
+                            $ticket->seatsio_event_key = $event_key;
+                            if (empty($ticket->seatsio_seats)) {
+                                $ticket->seatsio_seats = array();
+                            }
+
+                            $ticket->seatsio_seats[$uuid] = $label;
+                        }
+                    }
+                }
+            }
+            $tb->next();
+        }
+    }
+    public static function booking_set_status($result, $EM_Booking)
+    {
+        global $wpdb;
+        if (!$result) {
+            return false;
+        }
+
+        $client = EM_Seatsio::getAPIClient();
+        //;
+        //
+        $q = "select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id;
+        echo $EM_Booking->booking_status;
+        $seats     = $wpdb->get_results($q, OBJECT);
+        $seat_keys = array();
+        foreach ($seats as $seat) {
+            $seat_keys[] = $seat->seat_key;
+        }
+        switch ($EM_Booking->booking_status) {
+            case '1': //approved
+                $client->book($seat->event_key, $seat_keys);
+                break;
+            case '2': //rejected
+            case '3': //canceled
+                $client->release($seat->event_key, $seat_keys);
+                break;
+            case '4': //Awaiting online payment
+            case '5'; //Awaiting payment
+            case '0': //pending
+            default:
+                # code...
+                break;
+        }
+        //var_dump($EM_Booking);die();
+        return true;
+    }
+    public static function get_ticket_meta($ticket_id) {
+        global $wpdb;
+        if($meta = $wpdb->get_var("select ticket_meta from " . EM_TICKETS_TABLE . " where ticket_id='" . $ticket_id . "' limit 1")) {
+            return unserialize($meta);
+        }
+        return null;
+    }
+    public static function ticket_booking_save($result, $EM_Ticket_Booking)
+    {
+        global $wpdb;
+        if (!$result) {
+            return $result;
+        }
+
+        if(empty($EM_Ticket_Booking->ticket->ticket_meta['seatsio_category'])) {
+            if($meta = self::get_ticket_meta($EM_Ticket_Booking->ticket_id)) {
+                $seatsio_category = $meta['seatsio_category'];
+            }
+        } else {
+            $seatsio_category = $EM_Ticket_Booking->ticket->ticket_meta['seatsio_category'];
+        }
+
+        $client = EM_Seatsio::getAPIClient();
+        $data                      = array();
+        $data['ticket_id']         = $EM_Ticket_Booking->ticket_id;
+        $data['booking_id']        = $EM_Ticket_Booking->booking_id;
+        $data['ticket_booking_id'] = $EM_Ticket_Booking->ticket_booking_id;
+
+        if(!empty($EM_Ticket_Booking->seatsio_event_key)) $data['event_key'] = $EM_Ticket_Booking->seatsio_event_key;
+        else {
+            $data['event_key'] = self::event_key($EM_Ticket_Booking->booking->event->post_id);
+        }
+        if(!empty($EM_Ticket_Booking->seatsio_seats)) $post_seats        = $EM_Ticket_Booking->seatsio_seats;
+        if(!empty($_POST['em_seatsio_bookings'])) $post_seats = $_POST['em_seatsio_bookings'];
+        //if empty $post_seats check if any in db and if there are, release bookings
+        if($EM_Ticket_Booking->booking->status == 1) {
+            $q  = "select event_key,seat_key from " . EM_SEATSIO_BOOKING . " where ticket_id = '" . $data['ticket_id'] . "' and booking_id = '" . $data['booking_id'] . "'";
+            if($seats_booked           = $wpdb->get_results($q, OBJECT)) {
+                $seats = array();
+                foreach ($seats_booked as $seat_booked) {
+                    if(empty($seats[$seat_booked->event_key])) $seats[$seat_booked->event_key] = array();
+                    $seats[$seat_booked->event_key][] = $seat_booked->seat_key;
+                }
+                foreach ($seats as $event=>$s) {
+                    $client->release($event,$s);
+                }
+                $wpdb->delete(EM_SEATSIO_BOOKING, array('ticket_id'=>$data['ticket_id'],'booking_id' => $data['booking_id']));
+            }
+        }
+        $client = EM_Seatsio::getAPIClient();
+        $seats  = $client->report($data['event_key'], 'byUuid');
+        $seats_to_book = array();
+        if (!empty($post_seats)) {
+            foreach ($post_seats as $uuid => $label) {
+                //validate uuid with chart
+                if (!empty($seats->$uuid)) {
+                    $seat = $seats->$uuid;
+                    if ($seat->status != 'booked' && $seat->categoryKey==$seatsio_category) {
+                        $data['seat_key'] = $uuid;
+                        $q                = "SELECT count(1) FROM " . EM_SEATSIO_BOOKING . " WHERE seat_key = '" . $data['seat_key'] . "' and event_key='" . $data['event_key'] . "' LIMIT 1";
+                        if ($wpdb->get_var($q) == 0) {
+                            $wpdb->insert(EM_SEATSIO_BOOKING, $data);
+                            if($EM_Ticket_Booking->booking->status == 1) {
+                                if(empty($seats_to_book[$data['event_key']])) $seats_to_book[$data['event_key']] = array();
+                                $seats_to_book[$data['event_key']][]=$data['seat_key'];
+                            }
+                        }
+                    }
+                }
+            }
+            if(!empty($seats_to_book)) {
+                foreach ($seats_to_book as $event=>$s) {
+                    $client->book($event,$s);
+                }
+            }
+        }
+        return true;
+    }
+    public static function ticket_by_seatsio_category($event_id, $seatsio_category)
+    {
+        $emt = new EM_Tickets($event_id);
+        foreach ($emt->tickets as $ticket) {
+            if (!empty($ticket->ticket_meta['seatsio_category']) && $ticket->ticket_meta['seatsio_category'] == $seatsio_category) {
+                return $ticket;
+            }
+        }
+    }
+    public static function event_details($post_id,$booking_id=null)
     {
         if (empty($post_id)) {
             return false;
@@ -133,16 +339,72 @@ class EM_Seatsio
         $q = "SELECT event_key FROM " . EM_SEATSIO_EVENT . " WHERE post_id='" . $post_id . "' LIMIT 1";
         global $wpdb;
         if ($event_key = $wpdb->get_var($q)) {
-            $response            = new stdClass();
-            $response->event_key = $event_key;
-            $client              = EM_Seatsio::getAPIClient();
-            $response->seats     = $client->report($event_key);
-            $response->event     = $client->event($event_key);
-            $event_id            = $wpdb->get_var("select id from " . EM_SEATSIO_EVENT . " where post_id=" . $post_id);
-            $response->tickets   = array();
-            $emt                 = new EM_Tickets($event_id);
+            $event_id = $wpdb->get_var("select event_id from " . EM_EVENTS_TABLE . " where post_id='" . $post_id . "' limit 1");
+            //get seats and users
+            $q  = "select person_id,emsb.booking_id,emsb.ticket_id,emsb.seat_key from " . EM_SEATSIO_BOOKING . " as emsb join " . EM_BOOKINGS_TABLE . " as emb on emb.booking_id=emsb.booking_id  where emsb.event_key = '" . $event_key . "'";
+            $persons           = $wpdb->get_results($q, OBJECT);
+            $seat_persons      = array();
+            $persons_user_data = array();
+            $seats_by_booking = array();
+            foreach ($persons as $person) {
+                if (empty($persons_user_data[$person->person_id])) {
+                    global $userpro;
+                    if (!empty($userpro)) {
+                        $ud                           = get_userdata($person->person_id)->data;
+                        $user_data                    = new stdClass();
+                        $user_data->user_id           = $person->person_id;
+                        $user_data->display_name      = $ud->display_name;
+                        $user_data->profile_photo_url = $userpro->profile_photo_url($person->person_id);
+                        $user_data->shortbio          = $userpro->shortbio($person->person_id);
+                        $user_data->permalink         = $userpro->permalink($person->person_id);
+                    } else {
+                        $ud                      = get_userdata($person->person_id)->data;
+                        $user_data               = new stdClass();
+                        $user_data->user_id      = $person->person_id;
+                        $user_data->display_name = $ud->display_name;
+                    }
+                    $persons_user_data[$person->person_id] = $user_data;
+                } else {
+                    $user_data = $persons_user_data[$person->person_id];
+                }
+                $seat_persons[$person->seat_key] = $user_data;
+                if(empty($seats_by_booking[$person->booking_id])) $seats_by_booking[$person->booking_id] = array();
+                if(empty($seats_by_booking[$person->booking_id][$person->ticket_id])) $seats_by_booking[$person->booking_id][$person->ticket_id] = array();
+                $seats_by_booking[$person->booking_id][$person->ticket_id][] = $person->seat_key;
+            }
+
+            $response               = new stdClass();
+            $response->bookings = $seats_by_booking;
+            $response->booked_users = $persons_user_data;
+            $response->event_key    = $event_key;
+            $client                 = EM_Seatsio::getAPIClient();
+            $response->seats        = $client->report($event_key, 'byUuid');
+            $booked_by_user_category = array();
+            foreach ($response->seats as &$seat) {
+                $ticket            = self::ticket_by_seatsio_category($event_id, $seat->categoryKey);
+                $seat->publicLabel = $ticket->ticket_name . ' ' . $seat->label . ' $' . number_format_i18n($ticket->ticket_price, 2);
+                if ($seat->status === 'blocked' || $seat->status === 'reservedByToken') {
+                    $seat->publicLabel = 'Reserved';
+                }
+                if ($seat->status === 'booked') {
+                    $seat->publicLabel = 'Reserved';
+                    if (!empty($seat_persons[$seat->uuid])) {
+                        $seat->user_id = $seat_persons[$seat->uuid]->user_id;
+                        $seat->publicLabel .= ': ' . $seat_persons[$seat->uuid]->display_name;
+                    }
+                    if(!empty($seat->user_id)) {
+                        if(empty($booked_by_category[(int) $seat->categoryKey])) $booked_by_category[(int) $seat->categoryKey]=array();
+                        if(empty($booked_by_category[(int) $seat->categoryKey][ (int) $seat->user_id])) $booked_by_category[ (int) $seat->categoryKey][ (int) $seat->user_id]=array();
+                        $booked_by_user_category[ (int) $seat->categoryKey][ (int) $seat->user_id][$seat->uuid]=$seat->label;
+                    }
+                }
+            }
+            $response->event   = $client->event($event_key);
+            $response->tickets = array();
+            $emt               = new EM_Tickets($event_id);
             foreach ($emt->tickets as $ticket) {
-                $response->tickets[] = array('event_id' => $ticket->event_id, 'ticket_id' => $ticket->ticket_id, 'name' => $ticket->ticket_name, 'price' => $ticket->ticket_price, 'meta' => $ticket->ticket_meta);
+                $seatsio_category = (int) $ticket->ticket_meta['seatsio_category'];
+                $response->tickets[] = array('event_id' => $ticket->event_id, 'ticket_id' => $ticket->ticket_id, 'name' => $ticket->ticket_name, 'price' => $ticket->ticket_price, 'meta' => $ticket->ticket_meta,'booked'=>isset($booked_by_user_category[$seatsio_category]) ? $booked_by_user_category[$seatsio_category] : null);
             }
             $response->categories = $client->categories($response->event->chartKey);
             return $response;
@@ -211,7 +473,7 @@ class EM_Seatsio
             }
             }
             return self::event_data($post_id, $data);*/
-            return $client->report($event_key);
+            return $client->report($event_key, 'byUuid');
         }
     }
 
@@ -368,6 +630,7 @@ $ret = $ticket->save();
         }
         define('EM_SEATSIO_LOCATION', $prefix . 'em_seatsio_location'); //TABLE NAME
         define('EM_SEATSIO_EVENT', $prefix . 'em_seatsio_event'); //TABLE NAME
+        define('EM_SEATSIO_BOOKING', $prefix . 'em_seatsio_bookings'); //TABLE NAME
 
         //check that EM is installed
         if (!defined('EM_VERSION')) {
@@ -442,7 +705,7 @@ $ret = $ticket->save();
             $options    = get_option('em_seatsio_settings');
             $public_key = $options["em_seatsio_public_key"];
             wp_enqueue_script('events-manager-seatsio', plugins_url('includes/js/events-manager-seatio.js', __FILE__), array('jquery'));
-            wp_localize_script('events-manager-seatsio', 'ajax_object', array('ajax_url' => admin_url('admin-ajax.php'), 'seatsio_public_key' => $public_key));
+            wp_localize_script('events-manager-seatsio', 'em_seatsio_object', array('ajax_url' => admin_url('admin-ajax.php'), 'seatsio_public_key' => $public_key));
         }
     }
 
