@@ -56,7 +56,7 @@ function em_seatsio_get_event()
     if (isset($_GET['booking_id'])) {
         $booking_id = (int) $_GET['booking_id'];
     }
-    if ($response = EM_Seatsio::event_details($post_id,$booking_id)) {
+    if ($response = EM_Seatsio::event_details($post_id, $booking_id)) {
         $options              = get_option('em_seatsio_settings');
         $response->public_key = $options["em_seatsio_public_key"];
         echo json_encode($response);
@@ -146,6 +146,7 @@ add_action('em_ticket_edit_form_fields', 'ticket_add_meta_inputs', 10, 2);
 add_action('em_ticket_get_post_pre', 'em_seatsio_get_post_ticket', 10, 2);
 
 add_action('em_ticket_booking_save', array('EM_Seatsio', 'ticket_booking_save'), 10, 2);
+//add_action('em_tickets_bookings_save', array('EM_Seatsio', 'booking_save'), 10, 2);
 
 add_action('em_booking_set_status', array('EM_Seatsio', 'booking_set_status'), 10, 2);
 
@@ -154,9 +155,54 @@ add_action('save_post', array('EM_Seatsio', 'save_post'), 1, 1); //set to 1 so m
 add_action('em_booking_get_post', array('EM_Seatsio', 'booking_get_post'), 10, 2);
 
 add_action('em_booking_delete', array('EM_Seatsio', 'booking_delete'), 10, 2);
+add_action('em_event_save', array('EM_Seatsio', 'event_save'), 10, 2);
+add_action('em_booking_get_spaces', array('EM_Seatsio', 'booking_get_spaces'), 10, 2);
+add_action('em_bookings_table_cols_template', array('EM_Seatsio', 'bookings_table_cols_template'));
+add_action('em_event_save_events', array('EM_Seatsio', 'events_save'), 10, 4);
+
+add_action('em_bookings_table_rows_col_seatsio_booths', array('EM_Seatsio', 'bookings_table_rows_col_seatsio_booths'), 10, 5);
 
 class EM_Seatsio
 {
+    public static $seats = null;
+    public static function booking_get_spaces($num,$EM_Booking) {
+        global $wpdb;
+        if(empty($EM_Booking->booking_id)) return $num;
+        if(empty($EM_Booking->event)) return $num;
+        $seats     = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id, OBJECT);
+        if (!self::$seats) {
+            $event_key = self::event_key($EM_Booking->event->post_id);
+            $client      = EM_Seatsio::getAPIClient();
+            self::$seats = $client->report($event_key, 'byUuid');
+        }
+        $result = [];
+        foreach ($seats as $seat) {
+            $key      = $seat->seat_key;
+            $result[] = self::$seats->$key->label;
+        }
+        return implode(', ', $result);
+    }
+    public static function bookings_table_cols_template($list)
+    {
+        $list['seatsio_booths'] = 'Booth Number';
+        return $list;
+    }
+    public static function bookings_table_rows_col_seatsio_booths($val, $EM_Booking, $this, $csv, $object)
+    {
+        global $wpdb;
+        $seats     = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id, OBJECT);
+        $event_key = self::event_key($EM_Booking->event->post_id);
+        if (!self::$seats) {
+            $client      = EM_Seatsio::getAPIClient();
+            self::$seats = $client->report($event_key, 'byUuid');
+        }
+        $result = [];
+        foreach ($seats as $seat) {
+            $key      = $seat->seat_key;
+            $result[] = self::$seats->$key->label;
+        }
+        return implode(', ', $result);
+    }
     public static function booking_delete($result, $EM_Booking)
     {
         if (!$result) {
@@ -207,6 +253,7 @@ class EM_Seatsio
             }
             $tb->next();
         }
+        return true;
     }
     public static function booking_set_status($result, $EM_Booking)
     {
@@ -214,41 +261,46 @@ class EM_Seatsio
         if (!$result) {
             return false;
         }
-
-        $client = EM_Seatsio::getAPIClient();
-        //;
-        //
-        $q = "select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id;
-        echo $EM_Booking->booking_status;
-        $seats     = $wpdb->get_results($q, OBJECT);
+        $client    = EM_Seatsio::getAPIClient();
+        $seats     = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id, OBJECT);
         $seat_keys = array();
-        foreach ($seats as $seat) {
-            $seat_keys[] = $seat->seat_key;
+        if (!empty($seats)) {
+            foreach ($seats as $seat) {
+                $seat_keys[] = $seat->seat_key;
+            }
+            switch ($EM_Booking->booking_status) {
+                case '1': //approved
+                    $client->book($seat->event_key, $seat_keys);
+                    break;
+                case '2': //rejected
+                case '3': //canceled
+                    $client->release($seat->event_key, $seat_keys);
+                    break;
+                case '4': //Awaiting online payment
+                case '5'; //Awaiting payment
+                case '0': //pending
+                default:
+                    # code...
+                    break;
+            }
         }
-        switch ($EM_Booking->booking_status) {
-            case '1': //approved
-                $client->book($seat->event_key, $seat_keys);
-                break;
-            case '2': //rejected
-            case '3': //canceled
-                $client->release($seat->event_key, $seat_keys);
-                break;
-            case '4': //Awaiting online payment
-            case '5'; //Awaiting payment
-            case '0': //pending
-            default:
-                # code...
-                break;
-        }
-        //var_dump($EM_Booking);die();
         return true;
     }
-    public static function get_ticket_meta($ticket_id) {
+    public static function get_ticket_meta($ticket_id)
+    {
         global $wpdb;
-        if($meta = $wpdb->get_var("select ticket_meta from " . EM_TICKETS_TABLE . " where ticket_id='" . $ticket_id . "' limit 1")) {
+        if ($meta = $wpdb->get_var("select ticket_meta from " . EM_TICKETS_TABLE . " where ticket_id='" . $ticket_id . "' limit 1")) {
             return unserialize($meta);
         }
         return null;
+    }
+    public static function booking_save($result, $EM_Tickets_Bookings)
+    {
+        if (!$result) {
+            return;
+        }
+
+        return true;
     }
     public static function ticket_booking_save($result, $EM_Ticket_Booking)
     {
@@ -257,65 +309,75 @@ class EM_Seatsio
             return $result;
         }
 
-        if(empty($EM_Ticket_Booking->ticket->ticket_meta['seatsio_category'])) {
-            if($meta = self::get_ticket_meta($EM_Ticket_Booking->ticket_id)) {
+        if (empty($EM_Ticket_Booking->ticket->ticket_meta['seatsio_category'])) {
+            if ($meta = self::get_ticket_meta($EM_Ticket_Booking->ticket_id)) {
                 $seatsio_category = $meta['seatsio_category'];
             }
         } else {
             $seatsio_category = $EM_Ticket_Booking->ticket->ticket_meta['seatsio_category'];
         }
 
-        $client = EM_Seatsio::getAPIClient();
+        $client                    = EM_Seatsio::getAPIClient();
         $data                      = array();
         $data['ticket_id']         = $EM_Ticket_Booking->ticket_id;
         $data['booking_id']        = $EM_Ticket_Booking->booking_id;
         $data['ticket_booking_id'] = $EM_Ticket_Booking->ticket_booking_id;
 
-        if(!empty($EM_Ticket_Booking->seatsio_event_key)) $data['event_key'] = $EM_Ticket_Booking->seatsio_event_key;
-        else {
+        if (!empty($EM_Ticket_Booking->seatsio_event_key)) {
+            $data['event_key'] = $EM_Ticket_Booking->seatsio_event_key;
+        } else {
             $data['event_key'] = self::event_key($EM_Ticket_Booking->booking->event->post_id);
         }
-        if(!empty($EM_Ticket_Booking->seatsio_seats)) $post_seats        = $EM_Ticket_Booking->seatsio_seats;
-        if(!empty($_POST['em_seatsio_bookings'])) $post_seats = $_POST['em_seatsio_bookings'];
+        if (!empty($EM_Ticket_Booking->seatsio_seats)) {
+            $post_seats = $EM_Ticket_Booking->seatsio_seats;
+        }
+        if (!empty($_POST['em_seatsio_bookings'])) {
+            $post_seats = $_POST['em_seatsio_bookings'];
+        }
+
         //if empty $post_seats check if any in db and if there are, release bookings
-        if($EM_Ticket_Booking->booking->status == 1) {
-            $q  = "select event_key,seat_key from " . EM_SEATSIO_BOOKING . " where ticket_id = '" . $data['ticket_id'] . "' and booking_id = '" . $data['booking_id'] . "'";
-            if($seats_booked           = $wpdb->get_results($q, OBJECT)) {
+        if ($EM_Ticket_Booking->booking->status == 1) {
+            $q = "select event_key,seat_key from " . EM_SEATSIO_BOOKING . " where ticket_id = '" . $data['ticket_id'] . "' and booking_id = '" . $data['booking_id'] . "'";
+            if ($seats_booked = $wpdb->get_results($q, OBJECT)) {
                 $seats = array();
                 foreach ($seats_booked as $seat_booked) {
-                    if(empty($seats[$seat_booked->event_key])) $seats[$seat_booked->event_key] = array();
+                    if (empty($seats[$seat_booked->event_key])) {
+                        $seats[$seat_booked->event_key] = array();
+                    }
+
                     $seats[$seat_booked->event_key][] = $seat_booked->seat_key;
                 }
-                foreach ($seats as $event=>$s) {
-                    $client->release($event,$s);
+                foreach ($seats as $event => $s) {
+                    $client->release($event, $s);
                 }
-                $wpdb->delete(EM_SEATSIO_BOOKING, array('ticket_id'=>$data['ticket_id'],'booking_id' => $data['booking_id']));
+                $wpdb->delete(EM_SEATSIO_BOOKING, array('ticket_id' => $data['ticket_id'], 'booking_id' => $data['booking_id']));
             }
         }
-        $client = EM_Seatsio::getAPIClient();
-        $seats  = $client->report($data['event_key'], 'byUuid');
+        $client        = EM_Seatsio::getAPIClient();
+        $seats         = $client->report($data['event_key'], 'byUuid');
         $seats_to_book = array();
         if (!empty($post_seats)) {
             foreach ($post_seats as $uuid => $label) {
                 //validate uuid with chart
                 if (!empty($seats->$uuid)) {
                     $seat = $seats->$uuid;
-                    if ($seat->status != 'booked' && $seat->categoryKey==$seatsio_category) {
+                    if ($seat->status != 'booked' && $seat->categoryKey == $seatsio_category) {
                         $data['seat_key'] = $uuid;
-                        $q                = "SELECT count(1) FROM " . EM_SEATSIO_BOOKING . " WHERE seat_key = '" . $data['seat_key'] . "' and event_key='" . $data['event_key'] . "' LIMIT 1";
-                        if ($wpdb->get_var($q) == 0) {
+                        if ($wpdb->get_var("SELECT count(1) FROM " . EM_SEATSIO_BOOKING . " WHERE seat_key = '" . $data['seat_key'] . "' and event_key='" . $data['event_key'] . "' LIMIT 1") == 0) {
                             $wpdb->insert(EM_SEATSIO_BOOKING, $data);
-                            if($EM_Ticket_Booking->booking->status == 1) {
-                                if(empty($seats_to_book[$data['event_key']])) $seats_to_book[$data['event_key']] = array();
-                                $seats_to_book[$data['event_key']][]=$data['seat_key'];
+                            if ($EM_Ticket_Booking->booking->status == 1) {
+                                if (empty($seats_to_book[$data['event_key']])) {
+                                    $seats_to_book[$data['event_key']] = array();
+                                }
+                                $seats_to_book[$data['event_key']][] = $data['seat_key'];
                             }
                         }
                     }
                 }
             }
-            if(!empty($seats_to_book)) {
-                foreach ($seats_to_book as $event=>$s) {
-                    $client->book($event,$s);
+            if (!empty($seats_to_book)) {
+                foreach ($seats_to_book as $event => $s) {
+                    $client->book($event, $s);
                 }
             }
         }
@@ -330,7 +392,7 @@ class EM_Seatsio
             }
         }
     }
-    public static function event_details($post_id,$booking_id=null)
+    public static function event_details($post_id, $booking_id = null)
     {
         if (empty($post_id)) {
             return false;
@@ -341,11 +403,11 @@ class EM_Seatsio
         if ($event_key = $wpdb->get_var($q)) {
             $event_id = $wpdb->get_var("select event_id from " . EM_EVENTS_TABLE . " where post_id='" . $post_id . "' limit 1");
             //get seats and users
-            $q  = "select person_id,emsb.booking_id,emsb.ticket_id,emsb.seat_key from " . EM_SEATSIO_BOOKING . " as emsb join " . EM_BOOKINGS_TABLE . " as emb on emb.booking_id=emsb.booking_id  where emsb.event_key = '" . $event_key . "'";
+            $q                 = "select person_id,emsb.booking_id,emsb.ticket_id,emsb.seat_key from " . EM_SEATSIO_BOOKING . " as emsb join " . EM_BOOKINGS_TABLE . " as emb on emb.booking_id=emsb.booking_id  where emsb.event_key = '" . $event_key . "'";
             $persons           = $wpdb->get_results($q, OBJECT);
             $seat_persons      = array();
             $persons_user_data = array();
-            $seats_by_booking = array();
+            $seats_by_booking  = array();
             foreach ($persons as $person) {
                 if (empty($persons_user_data[$person->person_id])) {
                     global $userpro;
@@ -368,17 +430,23 @@ class EM_Seatsio
                     $user_data = $persons_user_data[$person->person_id];
                 }
                 $seat_persons[$person->seat_key] = $user_data;
-                if(empty($seats_by_booking[$person->booking_id])) $seats_by_booking[$person->booking_id] = array();
-                if(empty($seats_by_booking[$person->booking_id][$person->ticket_id])) $seats_by_booking[$person->booking_id][$person->ticket_id] = array();
+                if (empty($seats_by_booking[$person->booking_id])) {
+                    $seats_by_booking[$person->booking_id] = array();
+                }
+
+                if (empty($seats_by_booking[$person->booking_id][$person->ticket_id])) {
+                    $seats_by_booking[$person->booking_id][$person->ticket_id] = array();
+                }
+
                 $seats_by_booking[$person->booking_id][$person->ticket_id][] = $person->seat_key;
             }
 
-            $response               = new stdClass();
-            $response->bookings = $seats_by_booking;
-            $response->booked_users = $persons_user_data;
-            $response->event_key    = $event_key;
-            $client                 = EM_Seatsio::getAPIClient();
-            $response->seats        = $client->report($event_key, 'byUuid');
+            $response                = new stdClass();
+            $response->bookings      = $seats_by_booking;
+            $response->booked_users  = $persons_user_data;
+            $response->event_key     = $event_key;
+            $client                  = EM_Seatsio::getAPIClient();
+            $response->seats         = $client->report($event_key, 'byUuid');
             $booked_by_user_category = array();
             foreach ($response->seats as &$seat) {
                 $ticket            = self::ticket_by_seatsio_category($event_id, $seat->categoryKey);
@@ -392,10 +460,16 @@ class EM_Seatsio
                         $seat->user_id = $seat_persons[$seat->uuid]->user_id;
                         $seat->publicLabel .= ': ' . $seat_persons[$seat->uuid]->display_name;
                     }
-                    if(!empty($seat->user_id)) {
-                        if(empty($booked_by_category[(int) $seat->categoryKey])) $booked_by_category[(int) $seat->categoryKey]=array();
-                        if(empty($booked_by_category[(int) $seat->categoryKey][ (int) $seat->user_id])) $booked_by_category[ (int) $seat->categoryKey][ (int) $seat->user_id]=array();
-                        $booked_by_user_category[ (int) $seat->categoryKey][ (int) $seat->user_id][$seat->uuid]=$seat->label;
+                    if (!empty($seat->user_id)) {
+                        if (empty($booked_by_category[(int) $seat->categoryKey])) {
+                            $booked_by_category[(int) $seat->categoryKey] = array();
+                        }
+
+                        if (empty($booked_by_category[(int) $seat->categoryKey][(int) $seat->user_id])) {
+                            $booked_by_category[(int) $seat->categoryKey][(int) $seat->user_id] = array();
+                        }
+
+                        $booked_by_user_category[(int) $seat->categoryKey][(int) $seat->user_id][$seat->uuid] = $seat->label;
                     }
                 }
             }
@@ -403,8 +477,10 @@ class EM_Seatsio
             $response->tickets = array();
             $emt               = new EM_Tickets($event_id);
             foreach ($emt->tickets as $ticket) {
-                $seatsio_category = (int) $ticket->ticket_meta['seatsio_category'];
-                $response->tickets[] = array('event_id' => $ticket->event_id, 'ticket_id' => $ticket->ticket_id, 'name' => $ticket->ticket_name, 'price' => $ticket->ticket_price, 'meta' => $ticket->ticket_meta,'booked'=>isset($booked_by_user_category[$seatsio_category]) ? $booked_by_user_category[$seatsio_category] : null);
+                if (!empty($ticket->ticket_meta['seatsio_category'])) {
+                    $seatsio_category    = (int) $ticket->ticket_meta['seatsio_category'];
+                    $response->tickets[] = array('event_id' => $ticket->event_id, 'ticket_id' => $ticket->ticket_id, 'name' => $ticket->ticket_name, 'price' => $ticket->ticket_price, 'meta' => $ticket->ticket_meta, 'booked' => isset($booked_by_user_category[$seatsio_category]) ? $booked_by_user_category[$seatsio_category] : null);
+                }
             }
             $response->categories = $client->categories($response->event->chartKey);
             return $response;
@@ -524,57 +600,81 @@ class EM_Seatsio
             }
         }
 
-        if ($_POST['post_type'] === 'event') {
-            //create event if not done
-            $event_key = self::createSeatsioEventKey($post_id, $location_id);
-            $q         = "SELECT count(1) FROM " . EM_SEATSIO_EVENT . " WHERE event_key='" . $event_key . "' LIMIT 1";
-            $total     = $wpdb->get_var($q);
-            if ($total > 0) {
-                $wpdb->update(EM_SEATSIO_EVENT, array('event_key' => $event_key), array('post_id' => $post_id));
-            } else {
-                self::createEvent($chart_key, $event_key);
-                $wpdb->insert(EM_SEATSIO_EVENT, array('post_id' => $post_id, 'event_key' => $event_key));
-            }
-            //check tickets based on categories - create if missing
-            $client     = EM_Seatsio::getAPIClient();
-            $s          = $client->report($event_key, 'byCategoryKey');
-            $c          = $client->categories($chart_key);
-            $categories = array();
-            foreach ($c as $cat) {
-                $key                   = $cat->key;
-                $categories[$cat->key] = array('label' => $cat->label, 'seats' => count($s->$key));
-            }
-
-/*
-$event_id     = $wpdb->get_var("select id from ".EM_SEATSIO_EVENT." where post_id=".$post_id);
-$em_t = new EM_Tickets($event_id);
-foreach ($em_t->tickets as $ticket) {
-
-if(!empty($ticket->ticket_meta) && !empty($ticket->ticket_meta['seatsio_category_id'])) {
-unset($categories[$ticket->ticket_meta['seatsio_category_id']]);
-}
-}
-
-foreach ($categories as $key=>$cat) {
-if($cat['seats'] > 0) {
-$ticket = new EM_Ticket();
-$ticket->ticket_name = $cat['label'];
-preg_match('/\$([0-9]+[\.]*[0-9]*)/', $cat['label'], $match);
-$dollar_amount = tofloat($match[1]);
-if(!empty($dollar_amount)) {
-$ticket->ticket_price = $dollar_amount;
-}
-$ticket->event_id = $event_id;
-$ticket->ticket_spaces = $cat['seats'];
-$ticket->ticket_meta['seatsio_category_id'] = $key;
-$ret = $ticket->save();
-}
-}
- */
-        }
-
         return true;
     }
+    public static function events_save($result, $EM_Event, $event_ids, $post_ids)
+    {
+        if (!empty($event_ids)) {
+            foreach ($event_ids as $event_id) {
+                $event = new EM_Event($event_id);
+                self::event_save(true, $event);
+            }
+        }
+    }
+    public static function event_save($result, $EM_Event)
+    {
+        if (!$result) {
+            return;
+        }
+        global $wpdb;
+        $post_id     = $EM_Event->post_id;
+        $location_id = $EM_Event->location_id;
+
+        $chart_key = $wpdb->get_var("SELECT chart_key FROM " . EM_SEATSIO_LOCATION . " as emsl join " . EM_LOCATIONS_TABLE . " as eml on eml.post_id=emsl.post_id WHERE eml.location_id='" . $location_id . "' LIMIT 1");
+        if (empty($chart_key)) {
+            return;
+        }
+        //have to have location with chart key to continue
+        //create event if not done
+        $event_key = self::createSeatsioEventKey($EM_Event);
+        $total     = $wpdb->get_var("SELECT count(1) FROM " . EM_SEATSIO_EVENT . " WHERE event_key='" . $event_key . "' LIMIT 1");
+        if ($total > 0) {
+            $wpdb->update(EM_SEATSIO_EVENT, array('event_key' => $event_key), array('post_id' => $post_id));
+        } else {
+            self::createEvent($chart_key, $event_key);
+            $data = array('post_id' => $post_id, 'event_key' => $event_key);
+            $wpdb->insert(EM_SEATSIO_EVENT, $data);
+        }
+
+        //check tickets based on categories - create if missing
+        $client     = EM_Seatsio::getAPIClient();
+        $s          = $client->report($event_key, 'byCategoryKey');
+        $c          = $client->categories($chart_key);
+        $categories = array();
+        foreach ($c as $cat) {
+            $key                   = $cat->key;
+            $categories[$cat->key] = array('label' => $cat->label, 'seats' => !empty($s->$key) ? count($s->$key) : 0);
+        }
+        $event_id = $EM_Event->event_id;
+        $em_t     = new EM_Tickets($event_id);
+        foreach ($em_t->tickets as $ticket) {
+            if (!empty($ticket->ticket_meta) && !empty($ticket->ticket_meta['seatsio_category_id'])) {
+                //remove existing ticket categories list
+                unset($categories[$ticket->ticket_meta['seatsio_category_id']]);
+            }
+        }
+        if (!empty($categories)) {
+            foreach ($categories as $key => $cat) {
+                if ($cat['seats'] > 0) {
+                    $ticket = new EM_Ticket();
+                    preg_match('/\$([0-9]+[\.,]*[0-9]*)/', $cat['label'], $match);
+                    if (!empty($match[1])) {
+                        $dollar_amount = tofloat($match[1]);
+                        if (!empty($dollar_amount)) {
+                            $ticket->ticket_price = $dollar_amount;
+                        }
+                    }
+                    $ticket->ticket_name                        = trim(preg_replace('/\$([0-9]+[\.,]*[0-9]*)/', '', $cat['label']));
+                    $ticket->event_id                           = $event_id;
+                    $ticket->ticket_spaces                      = $cat['seats'];
+                    $ticket->ticket_meta['seatsio_category_id'] = $key;
+                    $ret                                        = $ticket->save();
+                }
+            }
+        }
+
+    }
+
     /**
      * em_seatsio_data option
      * @var array
@@ -593,9 +693,9 @@ $ret = $ticket->save();
         return self::$APIClient;
     }
 
-    public static function createSeatsioEventKey($post_id, $location_id)
+    public static function createSeatsioEventKey($EM_Event)
     {
-        return 'wp-ems-event-lid-' . $location_id . '-pid-' . $post_id;
+        return 'wp-ems-event-' . $EM_Event->event_slug . '-pid-' . $EM_Event->post_id;
     }
 
     public static function createEvent($chart_key, $event_key)

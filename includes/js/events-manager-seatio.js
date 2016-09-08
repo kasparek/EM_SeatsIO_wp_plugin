@@ -97,8 +97,32 @@ jQuery(document).ready(function($) {
             }
         };
     };
+    var EMS_tickets = new EM_Seatsio_Tickets();
     if (event_data) {
-        var EMS_tickets = new EM_Seatsio_Tickets();
         EMS_tickets.init();
+    } else {
+        if($("body").hasClass('single-event') && $("#em-booking").length>0) {
+            $("#em-booking").after('<div class="em-seatsio-tickets-chart"><div id="seatsio-chart"></div></div>');
+            var post_id = parseInt( ( document.body.className.match( /(?:^|\s)postid-([0-9]+)(?:\s|$)/ ) || [ 0, 0 ] )[1] );
+            jQuery.ajax({
+                dataType: "json",
+                url: em_seatsio_object.ajax_url,
+                method: 'post',
+                data: {
+                    post_id: post_id,
+                    action: 'em_seatsio_get_event'
+                },
+                error: function(xhr, status, error) {
+                    console.log(status);
+                },
+                success: function(response) {
+                    if (response && response.event_key) {
+                        event_data = response;
+                        $("#seatsio-chart").data('event',response.event_key);
+                        EMS_tickets.init();
+                    }
+                }
+            });
+        }
     }
 });

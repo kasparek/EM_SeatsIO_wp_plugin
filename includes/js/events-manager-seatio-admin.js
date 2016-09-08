@@ -2,15 +2,56 @@ jQuery(document).ready(function($) {
     var event_data = null;
     var EM_Seatsio_Event = function() {
         var self = this;
+        self.chart = null;
         self.selected_objects = [];
-        self.updateSelectedObjects = function() {
-            $("#chart-selected").text('');
-            if (!self.selected_objects || self.selected_objects.length === 0) return;
-            var labels = [];
-            $.each(self.selected_objects, function(index, value) {
-                labels.push(value.objectType + ' ' + value.label);
+        self.bookings_default = null;
+        self.moneyFormat = function(str) {
+            var number = parseFloat(str) || 0;
+            number = number.toFixed(2);
+            number = '$' + number.toLocaleString();
+            return number;
+        };
+        self.getTicketBySeatsioCategory = function(category) {
+            var result = null;
+            $.each(event_data.tickets, function(index, ticket) {
+                if (ticket.meta.seatsio_category == category) result = ticket;
             });
-            $("#chart-selected").text(labels.join(', '));
+            return result;
+        };
+        self.updateSelectedObjects = function() {
+        	var labels = [];
+            if ($("#seatsio-bookings-total").length === 0) {
+                $("#chart-selected").text('');
+                if (!self.selected_objects || self.selected_objects.length === 0) return;
+                $.each(self.selected_objects, function(index, value) {
+                    labels.push(value.objectType + ' ' + value.label);
+                });
+                $("#chart-selected").text(labels.join(', '));
+            } else {
+                $(".em-ticket-select").val('0');
+                if (!self.bookings_default) {
+                    self.bookings_default = $("#seats-selected").html();
+                }
+                $("#seats-selected").html(self.bookings_default);
+                $("#em-seatsio-bookings").html();
+                if (!self.selected_objects || self.selected_objects.length === 0) return;
+                $("#seats-selected").html('');
+                var total = 0;
+                $.each(self.selected_objects, function(index, value) {
+                    var ticket_category = value.category.key;
+                    var $cat_input = $("input.em-ticket-select[data-seatsio_category=" + ticket_category + "]");
+                    $cat_input.val(parseInt($cat_input.val()) + 1);
+                    var ticket = self.getTicketBySeatsioCategory(value.category.key);
+                    if (ticket) {
+                        total += parseFloat(ticket.price) || 0;
+                        $("#seats-selected").append('<tr><td>' + ticket.name + '</td><td>' + value.label + '</td><td>' + self.moneyFormat(ticket.price) + '</td><td><a href="#" class="ab-item em-seatsio-booking-remove" data-seat="' + value.uuid + '"><span class="dashicons dashicons-no"></span></a></td></tr>');
+                        $("#em-seatsio-bookings").append('<input type="hidden" name="em_seatsio_bookings[' + value.uuid + ']" value="' + value.label + '">');
+                    }
+                });
+                $(".em-seatsio-booking-remove").on('click', self.releaseObject);
+                $("#chart-selected").html(labels.join("\n"));
+                $("#seatsio-bookings-total").text(self.moneyFormat(total));
+            }
         };
         self.isObjectSelected = function(object) {
             var ret = false;
@@ -184,6 +225,7 @@ jQuery(document).ready(function($) {
                                     });
                                 }
                             };
+                            self.chart = chart;
                             $("#seatsio_btn_release").on('click', function() {
                                 block_seats('free');
                                 return false;
@@ -352,9 +394,10 @@ jQuery(document).ready(function($) {
                             if ($("div#em-booking-notes").length > 0) {
                                 $("div#em-booking-notes").before('<div id="em-event-where"></div>');
                                 EMS_event.init(response.post_id);
-                            }
-                            if ($(".em-bookings-table").length > 0) {
+                            } else if ($(".em-bookings-table").length > 0) {
                                 $(".em-bookings-table").after('<div style="margin-top:20px;">&nbsp;</div><div id="em-event-where"></div>');
+                                EMS_event.init(response.post_id);
+                            } else if (!EMS_event.chart) {
                                 EMS_event.init(response.post_id);
                             }
                         } else {
