@@ -81,8 +81,9 @@ class EM_Seatsio
         EM_Seatsio_booking::init();
         EM_Seatsio_event::init();
         EM_Seatsio_ticket_booking::init();
-        add_action('em_ticket_edit_form_fields', 'ticket_edit_form_fields', 10, 2);
+        add_action('em_ticket_edit_form_fields', array('EM_Seatsio', 'ticket_edit_form_fields'), 10, 2);
         add_action('em_ticket_get_post_pre', array('EM_Seatsio', 'ticket_get_post_pre'), 10, 2);
+        add_action('em_location_save', array('EM_Seatsio', 'location_save'), 10, 2);
         add_action('save_post', array('EM_Seatsio', 'save_post'), 1, 1); //set to 1 so metadata gets saved ASAP
         add_action('em_bookings_table_cols_template', array('EM_Seatsio', 'bookings_table_cols_template'));
         add_action('em_bookings_table_rows_col_seatsio_booths', array('EM_Seatsio', 'bookings_table_rows_col_seatsio_booths'), 10, 5);
@@ -201,6 +202,13 @@ class EM_Seatsio
         return null;
     }
 
+    public static function chart_key_by_event_post_id($post_id)
+    {
+        global $wpdb;
+        $q = "select sl.chart_key from " . EM_EVENTS_TABLE . " as e join " . EM_LOCATIONS_TABLE . " as l on l.location_id=e.location_id join " . EM_SEATSIO_LOCATION . " as sl on sl.post_id=l.post_id where e.post_id='" . $post_id . "' limit 1";
+        return $wpdb->get_var($q);
+    }
+
     /**
      * # Get EM Ticket based on seats.io category id
      * @return  object EM_Ticket
@@ -260,6 +268,38 @@ class EM_Seatsio
         }
     }
 
+    public static function location_save($result, $EM_Location)
+    {
+        global $wpdb;
+        $location_id = $EM_Location->location_id;
+        $chart_key   = !empty($_POST['em_seatsio_chart']) ? $_POST['em_seatsio_chart'] : null;
+        if (!empty($chart_key)) {
+            $charts    = self::fetch_all_charts();
+            $validated = false;
+
+            foreach ($charts as $chart) {
+                if ($chart->key === $chart_key) {
+                    $validated = true;
+                    break;
+                }
+            }
+
+            if ($validated === false) {
+                return false;
+            }
+            $post_id = $EM_Location->post_id;
+            $current_chart_key = $wpdb->get_var("SELECT chart_key FROM " . EM_SEATSIO_LOCATION . " WHERE post_id='" . $post_id . "' LIMIT 1");
+            if (!empty($current_chart_key)) {
+                if ($current_chart_key != $chart_key) {
+                    $wpdb->update(EM_SEATSIO_LOCATION, array('chart_key' => $chart_key), array('post_id' => $post_id));
+                }
+            } else {
+                $wpdb->insert(EM_SEATSIO_LOCATION, array('post_id' => $post_id, 'chart_key' => $chart_key));
+            }
+        }
+        return true;
+    }
+
     /**
      * # Handle global post save
      *
@@ -276,41 +316,41 @@ class EM_Seatsio
 
         $chart_key   = !empty($_POST['em_seatsio_chart']) ? $_POST['em_seatsio_chart'] : null;
         $location_id = !empty($_POST['location_id']) ? $_POST['location_id'] : null;
+/*
+if (!empty($chart_key)) {
+$chart_key = $_POST['em_seatsio_chart'];
+$charts    = self::fetch_all_charts();
+$validated = false;
 
-        if (!empty($chart_key)) {
-            $chart_key = $_POST['em_seatsio_chart'];
-            $charts    = self::fetch_all_charts();
-            $validated = false;
+foreach ($charts as $chart) {
+if ($chart->key === $chart_key) {
+$validated = true;
+break;
+}
+}
 
-            foreach ($charts as $chart) {
-                if ($chart->key === $chart_key) {
-                    $validated = true;
-                    break;
-                }
-            }
-
-            if ($validated === false) {
-                return false;
-            }
-
-            $q                 = "SELECT chart_key FROM " . EM_SEATSIO_LOCATION . " WHERE post_id='" . $post_id . "' LIMIT 1";
-            $current_chart_key = $wpdb->get_var($q);
-            if (!empty($current_chart_key)) {
-                if ($current_chart_key != $chart_key) {
-                    if ($post_type === 'event') {
-                        $wpdb->delete(EM_SEATSIO_EVENT, array('post_id' => $post_id));
-                    }
-                    if ($post_type === 'location') {
-                        $wpdb->update(EM_SEATSIO_LOCATION, array('chart_key' => $chart_key), array('post_id' => $post_id));
-                    }
-                }
-            } else {
-                if ($post_type === 'location') {
-                    $wpdb->insert(EM_SEATSIO_LOCATION, array('post_id' => $post_id, 'chart_key' => $chart_key));
-                }
-            }
-        }
-
+if ($validated === false) {
+return false;
+}
+var_dump($_POST);die('aa');
+$q                 = "SELECT chart_key FROM " . EM_SEATSIO_LOCATION . " WHERE post_id='" . $post_id . "' LIMIT 1";
+$current_chart_key = $wpdb->get_var($q);
+if (!empty($current_chart_key)) {
+if ($current_chart_key != $chart_key) {
+if ($post_type === 'event') {
+$wpdb->delete(EM_SEATSIO_EVENT, array('post_id' => $post_id));
+}
+if ($post_type === 'location') {
+$wpdb->update(EM_SEATSIO_LOCATION, array('chart_key' => $chart_key), array('post_id' => $post_id));
+}
+}
+} else {
+if ($post_type === 'location') {
+$wpdb->insert(EM_SEATSIO_LOCATION, array('post_id' => $post_id, 'chart_key' => $chart_key));
+}
+}
+}
+ */
         return true;
     }
 
@@ -347,7 +387,7 @@ class EM_Seatsio
         return $data;
     }
 
-    public function ticket_get_post_pre($ticket, $post = null)
+    public static function ticket_get_post_pre($ticket, $post = null)
     {
         if (empty($post)) {
             return;
@@ -359,11 +399,13 @@ class EM_Seatsio
         }
     }
 
-    public function ticket_edit_form_fields($col_count, $ticket)
+    public static function ticket_edit_form_fields($col_count, $ticket)
     {
         if (!empty($ticket->ticket_id)) {
-            echo '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_category]" class="ticket_meta_category" value="' . $ticket->ticket_meta['seatsio_category'] . '">'
-            . '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_chart]" class="ticket_meta_chart" value="' . $ticket->ticket_meta['seatsio_chart'] . '">';
+            $meta_cat = isset($ticket->ticket_meta['seatsio_category']) ? $ticket->ticket_meta['seatsio_category'] : '';
+            $meta_chart = isset($ticket->ticket_meta['seatsio_chart']) ? $ticket->ticket_meta['seatsio_chart'] : '';
+            echo '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_category]" class="ticket_meta_category" value="' . $meta_cat . '">'
+            . '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_chart]" class="ticket_meta_chart" value="' . $meta_chart . '">';
         }
     }
 

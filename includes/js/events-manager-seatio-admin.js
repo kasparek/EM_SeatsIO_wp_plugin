@@ -1,5 +1,8 @@
 jQuery(document).ready(function($) {
     var event_data = null;
+    jQuery('#em-location-reset a').on('click',function(e){
+        jQuery('div.em-location-data select').prop('disabled',false);
+    });
     var EM_Seatsio_Event = function() {
         var self = this;
         self.chart = null;
@@ -123,7 +126,14 @@ jQuery(document).ready(function($) {
                     console.log(status);
                 },
                 success: function(response) {
-                    if (response && response.event_key) {
+                    if(response && response.chart_changed && response.event && response.event.chartKey != response.db_chart_key) {
+                        if(!response.db_chart_key) {
+                            $("#wpbody-content h1").after('<div class="notice notice-error is-dismissible"><h1><strong>Location chart has changed. Current Location has no seats.io chart set.</strong> You will loose any existing bookings if you update the Event.</h1></div>');
+                        } else {
+                            $("#wpbody-content h1").after('<div class="notice notice-error is-dismissible"><h1><strong>Location chart has changed. Update Event to create Event Key and Ticket categories.</strong> You will loose any existing bookings.</h1></div>');
+                        }
+                        setTimeout(function(){window.scrollTo(0, 0);},500);
+                    } else if (response && response.event_key) {
                         event_data = response;
                         if ($("body").hasClass('event_page_events-manager-bookings') && $('table.em-tickets-bookings-table').length > 0) {
                             $('table.em-tickets-bookings-table thead th:first').after('<th>Seats.io seats (click to remove from booking)</th>');
@@ -186,7 +196,9 @@ jQuery(document).ready(function($) {
                                     return defaultColor;
                                 },
                                 tooltipText: function(object) {
-                                    return event_data.seats[object.uuid].publicLabel;
+                                    if(event_data.seats) {
+                                        return event_data.seats[object.uuid].publicLabel;
+                                    }
                                 },
                                 isObjectSelectable: function(object) {
                                     if (object.status === 'free') return true;
@@ -247,11 +259,16 @@ jQuery(document).ready(function($) {
         self.updateThumb = function() {
             var thumb = $("#em_seatsio_chart_select").find(":selected").data('thumb');
             if (thumb) {
-                $("#em_seatsio_chart_select_thumb").html('<img src="' + thumb + '" style="max-height: 100px;">');
+                $("#em_seatsio_chart_select_thumb").html('<img src="' + thumb + '">');
             }
         };
         self.init = function() {
             if ($("#em-location-data").length > 0) {
+                $(document).on('em_locations_autocomplete_selected',function(e){
+                    if(jQuery('div.em-location-data input').prop('readonly')) {
+                        jQuery('div.em-location-data select').css('background-color','#ccc').prop('disabled',true);
+                    }
+                });
                 var post_id = parseInt($("input[type=hidden][name=post_ID]").val()) || 0;
                 var location_id = parseInt($("input[type=hidden][name=location_id]").val()) || 0;
                 jQuery.ajax({
@@ -273,12 +290,13 @@ jQuery(document).ready(function($) {
                             $("#em_seatsio_chart_select option").remove();
                             $("#em_seatsio_chart_select_thumb").html('');
                         } else {
-                            $("#em-location-data table").append('<tr><th>Seatsio Chart:</th><td><select id="em_seatsio_chart_select" name="em_seatsio_chart"><option value="">Select Seats.io Chart</option></select></td></tr>');
-                            $("#em_seatsio_chart_select").after('<div id="em_seatsio_chart_select_thumb" style="text-align: center;"></div>');
+                            $("#em-location-data table").append('<tr><th>Seatsio Chart:</th><td><select id="em_seatsio_chart_select" name="em_seatsio_chart" style="width: 250px;"><option value="">Select Seats.io Chart</option></select></td></tr>');
+                            $("#em_seatsio_chart_select").after('<div id="em_seatsio_chart_select_thumb" style="text-align:center; width:250px;"></div>');
                         }
                         $.each(response.list, function(index, value) {
                             $("#em_seatsio_chart_select").append('<option value="' + value.key + '" data-thumb="' + value.thumb + '"' + (selected_key == value.key ? ' selected="selected"' : '') + '>' + value.name + '</option>');
                         });
+                        $(document).trigger('em_locations_autocomplete_selected');
                         $("#em_seatsio_chart_select").on('change', function() {
                             self.updateThumb();
                             var chart_key = $(this).val();

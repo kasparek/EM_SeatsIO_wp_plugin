@@ -59,7 +59,13 @@ class EM_Seatsio_event
         //create event if not done
         $event_key = self::createSeatsioEventKey($EM_Event);
         $total     = $wpdb->get_var("SELECT count(1) FROM " . EM_SEATSIO_EVENT . " WHERE event_key='" . $event_key . "' LIMIT 1");
+        //check if chart has not changed
+        $client = EM_Seatsio::getAPIClient();
         if ($total > 0) {
+            $event = $client->event($event_key);
+            if ($chart_key != $event->chartKey) {
+                self::createEvent($chart_key, $event_key);
+            }
             $wpdb->update(EM_SEATSIO_EVENT, array('event_key' => $event_key), array('post_id' => $post_id));
         } else {
             self::createEvent($chart_key, $event_key);
@@ -68,7 +74,6 @@ class EM_Seatsio_event
         }
 
         //check tickets based on categories - create if missing
-        $client     = EM_Seatsio::getAPIClient();
         $s          = $client->report($event_key, 'byCategoryKey');
         $c          = $client->categories($chart_key);
         $categories = array();

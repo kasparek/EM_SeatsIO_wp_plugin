@@ -56,6 +56,10 @@ class EM_Seatsio_ajax
         $response             = new stdClass();
         $options              = get_option('em_seatsio_settings');
         $response->public_key = $options["em_seatsio_public_key"];
+        $response->chart_changed = false;
+
+        //check if location chart has not changed
+        $db_chart_key = EM_Seatsio::chart_key_by_event_post_id($post_id);
 
         global $wpdb;
         if (!empty($post_id) && $event_key = $wpdb->get_var("SELECT event_key FROM " . EM_SEATSIO_EVENT . " WHERE post_id='" . $post_id . "' LIMIT 1")) {
@@ -98,50 +102,59 @@ class EM_Seatsio_ajax
                 $seats_by_booking[$person->booking_id][$person->ticket_id][] = $person->seat_key;
             }
 
-            $response                = new stdClass();
-            $response->bookings      = $seats_by_booking;
-            $response->booked_users  = $persons_user_data;
-            $response->event_key     = $event_key;
-            $client                  = EM_Seatsio::getAPIClient();
-            $response->seats         = $client->report($event_key, 'byUuid');
-            $booked_by_user_category = array();
-            foreach ($response->seats as &$seat) {
-                $ticket            = EM_Seatsio::ticket_by_seatsio_category($event_id, $seat->categoryKey);
-                $seat->publicLabel = $ticket->ticket_name . ' ' . $seat->label . ' $' . number_format_i18n($ticket->ticket_price, 2);
-                if ($seat->status === 'blocked' || $seat->status === 'reservedByToken') {
-                    $seat->publicLabel = 'Reserved';
-                }
-                if ($seat->status === 'booked') {
-                    $seat->publicLabel = 'Reserved';
-                    if (!empty($seat_persons[$seat->uuid])) {
-                        $seat->user_id = $seat_persons[$seat->uuid]->user_id;
-                        $seat->publicLabel .= ': ' . $seat_persons[$seat->uuid]->display_name;
+            $response->bookings     = $seats_by_booking;
+            $response->booked_users = $persons_user_data;
+            $response->event_key    = $event_key;
+            $client                 = EM_Seatsio::getAPIClient();
+            $response->event        = $client->event($event_key);
+            if ($response->event->chartKey != $db_chart_key) {
+                $response->db_chart_key = $db_chart_key;
+                $response->chart_changed = true;
+            } else {
+                $response->seats         = $client->report($event_key, 'byUuid');
+                $booked_by_user_category = array();
+                foreach ($response->seats as &$seat) {
+                    $ticket            = EM_Seatsio::ticket_by_seatsio_category($event_id, $seat->categoryKey);
+                    $seat->publicLabel = $ticket->ticket_name . ' ' . $seat->label . ' $' . number_format_i18n($ticket->ticket_price, 2);
+                    if ($seat->status === 'blocked' || $seat->status === 'reservedByToken') {
+                        $seat->publicLabel = 'Reserved';
                     }
-                    if (!empty($seat->user_id)) {
-                        if (empty($booked_by_category[(int) $seat->categoryKey])) {
-                            $booked_by_category[(int) $seat->categoryKey] = array();
+                    if ($seat->status === 'booked') {
+                        $seat->publicLabel = 'Reserved';
+                        if (!empty($seat_persons[$seat->uuid])) {
+                            $seat->user_id = $seat_persons[$seat->uuid]->user_id;
+                            $seat->publicLabel .= ': ' . $seat_persons[$seat->uuid]->display_name;
                         }
+                        if (!empty($seat->user_id)) {
+                            if (empty($booked_by_category[(int) $seat->categoryKey])) {
+                                $booked_by_category[(int) $seat->categoryKey] = array();
+                            }
 
-                        if (empty($booked_by_category[(int) $seat->categoryKey][(int) $seat->user_id])) {
-                            $booked_by_category[(int) $seat->categoryKey][(int) $seat->user_id] = array();
+                            if (empty($booked_by_category[(int) $seat->categoryKey][(int) $seat->user_id])) {
+                                $booked_by_category[(int) $seat->categoryKey][(int) $seat->user_id] = array();
+                            }
+
+                            $booked_by_user_category[(int) $seat->categoryKey][(int) $seat->user_id][$seat->uuid] = $seat->label;
                         }
-
-                        $booked_by_user_category[(int) $seat->categoryKey][(int) $seat->user_id][$seat->uuid] = $seat->label;
                     }
                 }
-            }
-            $response->event   = $client->event($event_key);
-            $response->tickets = array();
-            $emt               = new EM_Tickets($event_id);
-            foreach ($emt->tickets as $ticket) {
-                if (!empty($ticket->ticket_meta['seatsio_category'])) {
-                    $seatsio_category    = (int) $ticket->ticket_meta['seatsio_category'];
-                    $response->tickets[] = array('event_id' => $ticket->event_id, 'ticket_id' => $ticket->ticket_id, 'name' => $ticket->ticket_name, 'price' => $ticket->ticket_price, 'meta' => $ticket->ticket_meta, 'booked' => isset($booked_by_user_category[$seatsio_category]) ? $booked_by_user_category[$seatsio_category] : null);
+
+                $response->tickets = array();
+                $emt               = new EM_Tickets($event_id);
+                foreach ($emt->tickets as $ticket) {
+                    if (!empty($ticket->ticket_meta['seatsio_category'])) {
+                        $seatsio_category    = (int) $ticket->ticket_meta['seatsio_category'];
+                        $response->tickets[] = array('event_id' => $ticket->event_id, 'ticket_id' => $ticket->ticket_id, 'name' => $ticket->ticket_name, 'price' => $ticket->ticket_price, 'meta' => $ticket->ticket_meta, 'booked' => isset($booked_by_user_category[$seatsio_category]) ? $booked_by_user_category[$seatsio_category] : null);
+                    }
                 }
+                $response->categories = $client->categories($response->event->chartKey);
             }
-            $response->categories = $client->categories($response->event->chartKey);
         }
-        wp_send_json($response);
+        if (defined('DOING_AJAX') && DOING_AJAX) {
+            wp_send_json($response);
+        } else {
+            return json_encode($response);
+        }
     }
 
     /**

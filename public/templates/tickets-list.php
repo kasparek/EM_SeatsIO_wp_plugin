@@ -1,12 +1,12 @@
 <?php
 $event_key = EM_Seatsio::event_key($EM_Event->post_id);
-$event_data = EM_Seatsio::event_details($EM_Event->post_id);
+$event_data = EM_Seatsio_ajax::event_details_json($EM_Event->post_id);
 
 $EM_Tickets = $EM_Event->get_bookings()->get_tickets();
 $collumns = $EM_Tickets->get_ticket_collumns();
 ?>
 <script>
-var event_json_data = '<?=json_encode($event_data);?>';
+var event_json_data = '<?=$event_data;?>';
 </script>
 <div class="em-seatsio-tickets-chart clearfix">
 <div id="seatsio-chart" data-event="<?=$event_key?>"></div>
