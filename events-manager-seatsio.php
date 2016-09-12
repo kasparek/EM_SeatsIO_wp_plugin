@@ -5,11 +5,11 @@ Plugin URI: ...
 Description: Integrate seats.io API with Events manager
 Author: Frantisek Kaspar
 Author URI: http://awake33.com
-Version: 0.0.4
+Version: 0.1.2
 Copyright (C) 2016
  */
 
-define('EM_SEATSIO_VERSION', 0.04);
+define('EM_SEATSIO_VERSION', 0.12);
 define('EM_SEATSIO_MIN_VERSION', 0.04);
 define('EM_SEATSIO_MIN_VERSION_CRITICAL', 0.04);
 
