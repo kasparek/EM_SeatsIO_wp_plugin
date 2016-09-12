@@ -55,8 +55,7 @@ function em_seatsio_create_event_table()
     $table_name = $wpdb->prefix . 'em_seatsio_event';
     $sql        = "CREATE TABLE " . $table_name . " (
           post_id int(20) unsigned NOT NULL DEFAULT '0',
-          event_key varchar(255) DEFAULT NULL,
-          data text DEFAULT NULL
+          event_key varchar(255) DEFAULT NULL
         ) DEFAULT CHARSET=utf8 ;";
     dbDelta($sql);
 }
