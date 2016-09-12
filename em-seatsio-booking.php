@@ -7,6 +7,7 @@ class EM_Seatsio_booking
         add_action('em_booking_get_post', array('EM_Seatsio_booking', 'booking_get_post'), 10, 2);
         add_action('em_booking_set_status', array('EM_Seatsio_booking', 'booking_set_status'), 10, 2);
         add_action('em_booking_delete', array('EM_Seatsio_booking', 'booking_delete'), 10, 2);
+        add_action('em_booking_save', array('EM_Seatsio_booking', 'booking_save'), 10, 2);
     }
 
     /**
@@ -52,6 +53,9 @@ class EM_Seatsio_booking
         return true;
     }
 
+    static $seats = array();
+    static $booked = array();
+
     /**
      * # Update status of booking
      * @param  boolean   $result success of previous action
@@ -71,29 +75,55 @@ class EM_Seatsio_booking
         }
         foreach ($bookings as $booking) {
             $client = EM_Seatsio::getAPIClient();
-            $seats  = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $booking->booking_id, OBJECT);
+            if(empty(self::$seats[$booking->booking_id])) {
+                self::$seats[$booking->booking_id]  = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $booking->booking_id, OBJECT);
+                $seats = self::$seats[$booking->booking_id];
+            } else {
+                $seats = self::$seats[$booking->booking_id];
+            }
             if (!empty($seats)) {
                 foreach ($seats as $seat) {
                     switch ($booking_status) {
+                        case '0': //pending
                         case '1': //approved
-                            try {
-                                $client->book($seat->event_key, array($seat->seat_key));
-                            } catch (Exception $e) {
-                                //probably already booked
+                        case '4': //Awaiting online payment
+                        case '5'; //Awaiting payment
+                            if(!isset(self::$booked[$seat->event_key])) self::$booked[$seat->event_key] = array();
+                            if(empty(self::$booked[$seat->event_key][$seat->seat_key])) {
+                                self::$booked[$seat->event_key][$seat->seat_key] = 'booked';
+                                try {
+                                    $client->book($seat->event_key, array($seat->seat_key));
+                                } catch (Exception $e) {
+                                    //probably already booked, but have to try every time
+                                    //from front-end first state is pending, but from admin by manual booking, first state is awaiting payment
+                                }
                             }
                             break;
                         case '2': //rejected
                         case '3': //canceled
                             $client->release($seat->event_key, array($seat->seat_key));
                             break;
-                        case '4': //Awaiting online payment
-                        case '5'; //Awaiting payment
-                        case '0': //pending
                         default:
                     }
                 }
             }
         }
+        return true;
+    }
+
+    /**
+     * # Save booking
+     * WP Admin
+     * @param  boolean   $result success of previous action
+     * @param  object    $EM_Booking
+     * @return boolean   Delete success
+     */
+    public static function booking_save($result, $EM_Booking)
+    {
+        if (!$result) {
+            return false;
+        }
+        self::booking_set_status(true, $EM_Booking);
         return true;
     }
 

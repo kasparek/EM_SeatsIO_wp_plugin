@@ -1,7 +1,7 @@
 jQuery(document).ready(function($) {
     var event_data = null;
-    jQuery('#em-location-reset a').on('click',function(e){
-        jQuery('div.em-location-data select').prop('disabled',false);
+    jQuery('#em-location-reset a').on('click', function(e) {
+        jQuery('div.em-location-data select').prop('disabled', false);
     });
     var EM_Seatsio_Event = function() {
         var self = this;
@@ -22,7 +22,7 @@ jQuery(document).ready(function($) {
             return result;
         };
         self.updateSelectedObjects = function() {
-        	var labels = [];
+            var labels = [];
             if ($("#seatsio-bookings-total").length === 0) {
                 $("#chart-selected").text('');
                 if (!self.selected_objects || self.selected_objects.length === 0) return;
@@ -126,13 +126,15 @@ jQuery(document).ready(function($) {
                     console.log(status);
                 },
                 success: function(response) {
-                    if(response && response.chart_changed && response.event && response.event.chartKey != response.db_chart_key) {
-                        if(!response.db_chart_key) {
+                    if (response && response.chart_changed && response.event && response.event.chartKey != response.db_chart_key) {
+                        if (!response.db_chart_key) {
                             $("#wpbody-content h1").after('<div class="notice notice-error is-dismissible"><h1><strong>Location chart has changed. Current Location has no seats.io chart set.</strong> You will loose any existing bookings if you update the Event.</h1></div>');
                         } else {
                             $("#wpbody-content h1").after('<div class="notice notice-error is-dismissible"><h1><strong>Location chart has changed. Update Event to create Event Key and Ticket categories.</strong> You will loose any existing bookings.</h1></div>');
                         }
-                        setTimeout(function(){window.scrollTo(0, 0);},500);
+                        setTimeout(function() {
+                            window.scrollTo(0, 0);
+                        }, 500);
                     } else if (response && response.event_key) {
                         event_data = response;
                         if ($("body").hasClass('event_page_events-manager-bookings') && $('table.em-tickets-bookings-table').length > 0) {
@@ -167,6 +169,13 @@ jQuery(document).ready(function($) {
                                 divId: "seatsio-chart",
                                 publicKey: response.public_key,
                                 event: response.event_key,
+                                onObjectClicked: function(object) {
+                                    if (event_data.seats[object.uuid].user_id) {
+                                        //show up the client modal popup
+                                        var b_user = event_data.booked_users[event_data.seats[object.uuid].user_id];
+                                        open_modal(b_user);
+                                    }
+                                },
                                 onObjectSelected: function(object) {
                                     if (self.is_editing_booking()) {
                                         $("td[data-seatsio-category=" + object.category.key + "]").append(self.get_seat_button(object));
@@ -196,7 +205,7 @@ jQuery(document).ready(function($) {
                                     return defaultColor;
                                 },
                                 tooltipText: function(object) {
-                                    if(event_data.seats) {
+                                    if (event_data.seats) {
                                         return event_data.seats[object.uuid].publicLabel;
                                     }
                                 },
@@ -264,9 +273,9 @@ jQuery(document).ready(function($) {
         };
         self.init = function() {
             if ($("#em-location-data").length > 0) {
-                $(document).on('em_locations_autocomplete_selected',function(e){
-                    if(jQuery('div.em-location-data input').prop('readonly')) {
-                        jQuery('div.em-location-data select').css('background-color','#ccc').prop('disabled',true);
+                $(document).on('em_locations_autocomplete_selected', function(e) {
+                    if (jQuery('div.em-location-data input').prop('readonly')) {
+                        jQuery('div.em-location-data select').css('background-color', '#ccc').prop('disabled', true);
                     }
                 });
                 var post_id = parseInt($("input[type=hidden][name=post_ID]").val()) || 0;
@@ -427,4 +436,32 @@ jQuery(document).ready(function($) {
             });
         }
     }
+    //modal
+    var modal_bg = "<div class='modal-overlay js-modal-close'></div>";
+    var modal = '<div id="profile-popup" class="modal-box"><header> <a href="#" class="js-modal-close close">×</a><h3>Modal Popup</h3></header>' + '<div class="modal-body"><img src="" class="avatar"><div class="profile-info"><p></p><a href="" class="profile">Full Profile</a></div><div class="clearfix"></div></div><footer> <a href="#" class="btn btn-small js-modal-close">Close</a> </footer></div>';
+    $("body").append(modal);
+    var open_modal = function(data) {
+        $("body").append(modal_bg);
+        $(".js-modal-close").off().on('click', function() {
+            $(".modal-box, .modal-overlay").fadeOut(500, function() {
+                $(".modal-overlay").remove();
+            });
+            return false;
+        });
+        $(".modal-overlay").css('height', $(document).height() + 'px').fadeTo(500, 0.7);
+        $("#profile-popup h3").html(data.display_name);
+        $("#profile-popup p").html(data.shortbio ? data.shortbio : '');
+        $("#profile-popup img.avatar").hide().one('load',function(){$(this).fadeIn();}).attr('src', data.profile_photo_url ? data.profile_photo_url : "");
+        $("#profile-popup a.profile").attr('href', data.permalink ? data.permalink : "#");
+        $(window).resize();
+        var sc = $(document).scrollTop();
+        $('#profile-popup').fadeIn(500).css('top', sc + 200);
+    };
+    //center modal
+    $(window).resize(function() {
+        $(".modal-box").css({
+            top: ($(window).height() - $(".modal-box").outerHeight()) / 2,
+            left: ($(window).width() - $(".modal-box").outerWidth()) / 2
+        });
+    }).resize();
 });

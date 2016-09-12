@@ -1,3 +1,4 @@
+window.em_seatsio = {};
 jQuery(document).ready(function($) {
     var event_data = typeof event_json_data !== 'undefined' ? JSON.parse(event_json_data) : null;
     var EM_Seatsio_Tickets = function() {
@@ -29,7 +30,7 @@ jQuery(document).ready(function($) {
                 self.bookings_default = $("#seats-selected").html();
             }
             $("#seats-selected").html(self.bookings_default);
-            $("#em-seatsio-bookings").html();
+            $("#em-seatsio-bookings").html('');
             if (!self.selected_objects || self.selected_objects.length === 0) return;
             $("#seats-selected").html('');
             var labels = [];
@@ -66,18 +67,22 @@ jQuery(document).ready(function($) {
         self.init = function() {
             if ($(".em-seatsio-tickets-chart").length > 0) {
                 jQuery.getScript('https://app.seats.io/chart.js', function() {
+                    var isEditor = $("#seats-selected").length > 0;
                     self.chart = new seatsio.SeatingChart({
                         divId: "seatsio-chart",
                         publicKey: em_seatsio_object.seatsio_public_key,
                         event: $("#seatsio-chart").data('event'),
-                        reserveOnSelect: true,
+                        reserveOnSelect: isEditor,
                         onObjectClicked: function(object) {
                             if (event_data.seats[object.uuid].user_id) {
                                 //show up the client modal popup
-                                console.log('Show popup for user', event_data.seats[object.uuid].user_id);
+                                var b_user = event_data.booked_users[ event_data.seats[object.uuid].user_id ];
+                                console.log('Show popup for user', b_user);
+                                open_modal(b_user);
                             }
                         },
                         onObjectSelected: function(object) {
+                            if (!isEditor) self.chart.deselectObjects([object.uuid]);
                             if (!self.isObjectSelected(object)) {
                                 self.selected_objects.push(object);
                             }
@@ -101,9 +106,9 @@ jQuery(document).ready(function($) {
     if (event_data) {
         EMS_tickets.init();
     } else {
-        if($("body").hasClass('single-event') && $("#em-booking").length>0) {
+        if ($("body").hasClass('single-event') && $("#em-booking").length > 0) {
             $("#em-booking").after('<div class="em-seatsio-tickets-chart"><div id="seatsio-chart"></div></div>');
-            var post_id = parseInt( ( document.body.className.match( /(?:^|\s)postid-([0-9]+)(?:\s|$)/ ) || [ 0, 0 ] )[1] );
+            var post_id = parseInt((document.body.className.match(/(?:^|\s)postid-([0-9]+)(?:\s|$)/) || [0, 0])[1]);
             jQuery.ajax({
                 dataType: "json",
                 url: em_seatsio_object.ajax_url,
@@ -118,11 +123,39 @@ jQuery(document).ready(function($) {
                 success: function(response) {
                     if (response && response.event_key) {
                         event_data = response;
-                        $("#seatsio-chart").data('event',response.event_key);
+                        $("#seatsio-chart").data('event', response.event_key);
                         EMS_tickets.init();
                     }
                 }
             });
         }
     }
+    //modal
+    var modal_bg = "<div class='modal-overlay js-modal-close'></div>";
+    var modal = '<div id="profile-popup" class="modal-box"><header> <a href="#" class="js-modal-close close">×</a><h3>Modal Popup</h3></header>' + '<div class="modal-body"><img src="" class="avatar"><div class="profile-info"><p></p><a href="" class="profile">Full Profile</a></div><div class="clearfix"></div></div><footer> <a href="#" class="btn btn-small js-modal-close">Close</a> </footer></div>';
+    $("body").append(modal);
+    var open_modal = function(data) {
+        $("body").append(modal_bg);
+        $(".js-modal-close").off().on('click', function() {
+            $(".modal-box, .modal-overlay").fadeOut(500, function() {
+                $(".modal-overlay").remove();
+            });
+            return false;
+        });
+        $(".modal-overlay").css('height', $(document).height() + 'px').fadeTo(500, 0.7);
+        $("#profile-popup h3").html(data.display_name);
+        $("#profile-popup p").html(data.shortbio ? data.shortbio : '');
+        $("#profile-popup img.avatar").hide().one('load',function(){$(this).fadeIn();}).attr('src', data.profile_photo_url ? data.profile_photo_url : "");
+        $("#profile-popup a.profile").attr('href', data.permalink ? data.permalink : "#");
+        $(window).resize();
+        var sc = $(document).scrollTop();
+        $('#profile-popup').fadeIn(500).css('top', sc + 200);
+    };
+    //center modal
+    $(window).resize(function() {
+        $(".modal-box").css({
+            top: ($(window).height() - $(".modal-box").outerHeight()) / 2,
+            left: ($(window).width() - $(".modal-box").outerWidth()) / 2
+        });
+    }).resize();
 });
