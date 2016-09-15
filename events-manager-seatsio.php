@@ -87,7 +87,6 @@ class EM_Seatsio
         add_action('save_post', array('EM_Seatsio', 'save_post'), 1, 1); //set to 1 so metadata gets saved ASAP
         add_action('em_bookings_table_cols_template', array('EM_Seatsio', 'bookings_table_cols_template'));
         add_action('em_bookings_table_rows_col_seatsio_booths', array('EM_Seatsio', 'bookings_table_rows_col_seatsio_booths'), 10, 5);
-
         add_shortcode('em_seatsio_chart', array('EM_Seatsio', 'em_seatsio_chart_shortcode'));
     }
 

@@ -6,6 +6,7 @@ class EM_Seatsio_ajax
     {
         add_action('wp_ajax_em_seatsio_has_event', array('EM_Seatsio_ajax', 'has_event_json'));
         add_action('wp_ajax_em_seatsio_get_event', array('EM_Seatsio_ajax', 'event_details_json'));
+        add_action('wp_ajax_nopriv_em_seatsio_get_event', array('EM_Seatsio_ajax', 'event_details_json'));
         add_action('wp_ajax_em_seatsio_get_charts', array('EM_Seatsio_ajax', 'charts_json'));
         add_action('wp_ajax_em_seatsio_chart_details', array('EM_Seatsio_ajax', 'chart_json'));
         add_action('wp_ajax_em_seatsio_block_event', array('EM_Seatsio_ajax', 'block_seat_json'));

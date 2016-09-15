@@ -140,6 +140,13 @@ class EM_Seatsio_booking
             return false;
         }
         global $wpdb;
+        //release seats
+        $bookings  = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id);
+        $client = EM_Seatsio::getAPIClient();
+        foreach ($bookings as $seat) {
+            $client->release($seat->event_key, array($seat->seat_key));
+        }
+        //delete database
         $sql    = $wpdb->prepare("DELETE FROM " . EM_SEATSIO_BOOKING . " WHERE booking_id=%d", $EM_Booking->booking_id);
         $result = $wpdb->query($sql);
         return true;

@@ -36,7 +36,7 @@ jQuery(document).ready(function($) {
                     self.bookings_default = $("#seats-selected").html();
                 }
                 $("#seats-selected").html(self.bookings_default);
-                $("#em-seatsio-bookings").html();
+                $("#em-seatsio-bookings").html('');
                 if (!self.selected_objects || self.selected_objects.length === 0) return;
                 $("#seats-selected").html('');
                 var total = 0;
@@ -169,6 +169,7 @@ jQuery(document).ready(function($) {
                                 divId: "seatsio-chart",
                                 publicKey: response.public_key,
                                 event: response.event_key,
+                                extraConfig: event_data,
                                 onObjectClicked: function(object) {
                                     if (event_data.seats[object.uuid].user_id) {
                                         //show up the client modal popup
@@ -198,7 +199,10 @@ jQuery(document).ready(function($) {
                                     }
                                     self.updateSelectedObjects();
                                 },
-                                objectColor: function(object, defaultColor) {
+                                objectColor: function(object, defaultColor, extraConfig) {
+                                    if(!extraConfig.seats[object.uuid].user_id && object.status==='booked') {
+                                        return '#ff0000';
+                                    }
                                     if (object.status === 'blocked') {
                                         return '#888888';
                                     }
@@ -209,9 +213,10 @@ jQuery(document).ready(function($) {
                                         return event_data.seats[object.uuid].publicLabel;
                                     }
                                 },
-                                isObjectSelectable: function(object) {
+                                isObjectSelectable: function(object,defaultValue, extraConfig) {
                                     if (object.status === 'free') return true;
                                     if (object.status === 'blocked') return true;
+                                    if (!extraConfig.seats[object.uuid].user_id) return true;
                                     return false;
                                 }
                             }).render();

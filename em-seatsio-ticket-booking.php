@@ -57,7 +57,6 @@ class EM_Seatsio_ticket_booking
                     if (empty($seats[$seat_booked->event_key])) {
                         $seats[$seat_booked->event_key] = array();
                     }
-
                     $seats[$seat_booked->event_key][] = $seat_booked->seat_key;
                 }
                 foreach ($seats as $event => $s) {
@@ -74,7 +73,7 @@ class EM_Seatsio_ticket_booking
                 //validate uuid with chart
                 if (!empty($seats->$uuid)) {
                     $seat = $seats->$uuid;
-                    if ($seat->status != 'booked' && $seat->categoryKey == $seatsio_category) {
+                    if ($seat->categoryKey == $seatsio_category) {
                         $data['seat_key'] = $uuid;
                         if ($wpdb->get_var("SELECT count(1) FROM " . EM_SEATSIO_BOOKING . " WHERE seat_key = '" . $data['seat_key'] . "' and event_key='" . $data['event_key'] . "' LIMIT 1") == 0) {
                             $wpdb->insert(EM_SEATSIO_BOOKING, $data);
@@ -90,7 +89,12 @@ class EM_Seatsio_ticket_booking
             }
             if (!empty($seats_to_book)) {
                 foreach ($seats_to_book as $event => $s) {
-                    $client->book($event, $s);
+                    try {
+                        $client->book($event, $s);
+                    } catch (Exception $e) {
+                        //probably already booked, but have to try every time
+                        //from front-end first state is pending, but from admin by manual booking, first state is awaiting payment
+                    }
                 }
             }
         }
