@@ -68,7 +68,7 @@ jQuery(document).ready(function($) {
             if ($(".em-seatsio-tickets-chart").length > 0) {
                 jQuery.getScript('https://app.seats.io/chart.js', function() {
                     var isEditor = $("#seats-selected").length > 0;
-                    self.chart = new seatsio.SeatingChart({
+                    var chartConfig = {
                         divId: "seatsio-chart",
                         publicKey: em_seatsio_object.seatsio_public_key,
                         event: $("#seatsio-chart").data('event'),
@@ -76,8 +76,7 @@ jQuery(document).ready(function($) {
                         onObjectClicked: function(object) {
                             if (event_data.seats[object.uuid].user_id) {
                                 //show up the client modal popup
-                                var b_user = event_data.booked_users[ event_data.seats[object.uuid].user_id ];
-                                console.log('Show popup for user', b_user);
+                                var b_user = event_data.booked_users[event_data.seats[object.uuid].user_id];
                                 open_modal(b_user);
                             }
                         },
@@ -97,7 +96,19 @@ jQuery(document).ready(function($) {
                         tooltipText: function(object) {
                             return event_data.seats[object.uuid].publicLabel;
                         }
-                    }).render();
+                    };
+                    if(event_data.public) {
+                        chartConfig.isObjectSelectable = function(object) {
+                            return false;
+                        };
+                        chartConfig.objectColor = function(object, defaultColor) {
+                            if (object.status === 'booked') {
+                                return '#F06509';
+                            }
+                            return '#333333';
+                        };
+                    }
+                    self.chart = new seatsio.SeatingChart(chartConfig).render();
                 });
             }
         };
@@ -106,15 +117,23 @@ jQuery(document).ready(function($) {
     if (event_data) {
         EMS_tickets.init();
     } else {
+        var post_id = null;
+        var public = false;
         if ($("body").hasClass('single-event') && $("#em-booking").length > 0) {
             $("#em-booking").after('<div class="em-seatsio-tickets-chart"><div id="seatsio-chart"></div></div>');
-            var post_id = parseInt((document.body.className.match(/(?:^|\s)postid-([0-9]+)(?:\s|$)/) || [0, 0])[1]);
+            post_id = parseInt((document.body.className.match(/(?:^|\s)postid-([0-9]+)(?:\s|$)/) || [0, 0])[1]);
+        } else if ($("div.em-seatsio-tickets-chart").length > 0) {
+            post_id = $("div.em-seatsio-tickets-chart").data('event');
+            public = true;
+        }
+        if (post_id) {
             jQuery.ajax({
                 dataType: "json",
                 url: em_seatsio_object.ajax_url,
                 method: 'post',
                 data: {
                     post_id: post_id,
+                    public: public ? 1 : 0,
                     action: 'em_seatsio_get_event'
                 },
                 error: function(xhr, status, error) {
@@ -132,7 +151,7 @@ jQuery(document).ready(function($) {
     }
     //modal
     var modal_bg = "<div class='modal-overlay js-modal-close'></div>";
-    var modal = '<div id="profile-popup" class="modal-box"><header> <a href="#" class="js-modal-close close">×</a><h3>Modal Popup</h3></header>' + '<div class="modal-body"><img src="" class="avatar"><div class="profile-info"><p></p><a href="" class="profile">Full Profile</a></div><div class="clearfix"></div></div><footer> <a href="#" class="btn btn-small js-modal-close">Close</a> </footer></div>';
+    var modal = '<div id="profile-popup" class="modal-box"><header> <a href="#" class="js-modal-close close">×</a><h3>Modal Popup</h3></header>' + '<div class="modal-body"><img src="" class="avatar"><div class="profile-info"><p></p><a href="" class="profile" target="_blank">Full Profile</a></div><div class="clearfix"></div></div><footer> <a href="#" class="btn btn-small js-modal-close">Close</a> </footer></div>';
     $("body").append(modal);
     var open_modal = function(data) {
         $("body").append(modal_bg);
@@ -145,7 +164,9 @@ jQuery(document).ready(function($) {
         $(".modal-overlay").css('height', $(document).height() + 'px').fadeTo(500, 0.7);
         $("#profile-popup h3").html(data.display_name);
         $("#profile-popup p").html(data.shortbio ? data.shortbio : '');
-        $("#profile-popup img.avatar").hide().one('load',function(){$(this).fadeIn();}).attr('src', data.profile_photo_url ? data.profile_photo_url : "");
+        $("#profile-popup img.avatar").hide().one('load', function() {
+            $(this).fadeIn();
+        }).attr('src', data.profile_photo_url ? data.profile_photo_url : "");
         $("#profile-popup a.profile").attr('href', data.permalink ? data.permalink : "#");
         $(window).resize();
         var sc = $(document).scrollTop();

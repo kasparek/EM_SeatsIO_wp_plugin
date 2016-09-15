@@ -53,9 +53,11 @@ class EM_Seatsio_ajax
                 $booking_id = (int) $_GET['booking_id'];
             }
         }
-        $response             = new stdClass();
-        $options              = get_option('em_seatsio_settings');
-        $response->public_key = $options["em_seatsio_public_key"];
+        $public_no_booking_chart = !empty($_POST['public']) ? true : false;
+
+        $response                = new stdClass();
+        $options                 = get_option('em_seatsio_settings');
+        $response->public_key    = $options["em_seatsio_public_key"];
         $response->chart_changed = false;
 
         //check if location chart has not changed
@@ -76,9 +78,9 @@ class EM_Seatsio_ajax
                         $ud                           = get_userdata($person->person_id)->data;
                         $user_data                    = new stdClass();
                         $user_data->user_id           = $person->person_id;
-                        $user_data->display_name      = $ud->display_name;
+                        $user_data->display_name      = preg_replace('/\s+/', ' ', $ud->display_name); //$ud->display_name;
                         $user_data->profile_photo_url = $userpro->profile_photo_url($person->person_id);
-                        $user_data->shortbio          = $userpro->shortbio($person->person_id);
+                        $user_data->shortbio          = preg_replace('/\s+/', ' ', $userpro->shortbio($person->person_id)); //$userpro->shortbio($person->person_id);
                         $user_data->permalink         = $userpro->permalink($person->person_id);
                     } else {
                         $ud                      = get_userdata($person->person_id)->data;
@@ -101,23 +103,28 @@ class EM_Seatsio_ajax
 
                 $seats_by_booking[$person->booking_id][$person->ticket_id][] = $person->seat_key;
             }
-
+            $response->public       = $public_no_booking_chart;
             $response->bookings     = $seats_by_booking;
             $response->booked_users = $persons_user_data;
             $response->event_key    = $event_key;
             $client                 = EM_Seatsio::getAPIClient();
             $response->event        = $client->event($event_key);
             if ($response->event->chartKey != $db_chart_key) {
-                $response->db_chart_key = $db_chart_key;
+                $response->db_chart_key  = $db_chart_key;
                 $response->chart_changed = true;
             } else {
                 $response->seats         = $client->report($event_key, 'byUuid');
                 $booked_by_user_category = array();
                 foreach ($response->seats as &$seat) {
-                    $ticket            = EM_Seatsio::ticket_by_seatsio_category($event_id, $seat->categoryKey);
-                    $seat->publicLabel = $ticket->ticket_name . ' ' . $seat->label . ' $' . number_format_i18n($ticket->ticket_price, 2);
-                    if ($seat->status === 'blocked' || $seat->status === 'reservedByToken') {
-                        $seat->publicLabel = 'Reserved';
+                    $ticket = EM_Seatsio::ticket_by_seatsio_category($event_id, $seat->categoryKey);
+                    if ($public_no_booking_chart === true) {
+                        $seat->publicLabel = 'Not Booked Yet';
+                    } else {
+                        if ($seat->status === 'blocked' || $seat->status === 'reservedByToken') {
+                            $seat->publicLabel = 'Reserved';
+                        } else {
+                            $seat->publicLabel = $ticket->ticket_name . ' ' . $seat->label . ' $' . number_format_i18n($ticket->ticket_price, 2);
+                        }
                     }
                     if ($seat->status === 'booked') {
                         $seat->publicLabel = 'Reserved';

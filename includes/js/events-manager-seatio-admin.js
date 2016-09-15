@@ -198,7 +198,7 @@ jQuery(document).ready(function($) {
                                     }
                                     self.updateSelectedObjects();
                                 },
-                                objectColor: function(object, defaultColor, extraConfig) {
+                                objectColor: function(object, defaultColor) {
                                     if (object.status === 'blocked') {
                                         return '#888888';
                                     }

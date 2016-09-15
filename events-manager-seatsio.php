@@ -87,6 +87,50 @@ class EM_Seatsio
         add_action('save_post', array('EM_Seatsio', 'save_post'), 1, 1); //set to 1 so metadata gets saved ASAP
         add_action('em_bookings_table_cols_template', array('EM_Seatsio', 'bookings_table_cols_template'));
         add_action('em_bookings_table_rows_col_seatsio_booths', array('EM_Seatsio', 'bookings_table_rows_col_seatsio_booths'), 10, 5);
+
+        add_shortcode('em_seatsio_chart', array('EM_Seatsio', 'em_seatsio_chart_shortcode'));
+    }
+
+    public static function em_seatsio_chart_shortcode($atts, $content = "")
+    {
+        $atts = shortcode_atts(array(
+            'visibility_threshold' => '20',
+            'category'             => 0,
+            'event'                => 0,
+        ), $atts, 'em_seatsio_chart');
+        $atts['category']             = (int) $atts['category'];
+        $atts['event']                = (int) $atts['event'];
+        $atts['visibility_threshold'] = (int) $atts['visibility_threshold'];
+        $event_post_id                = 0;
+        if ($atts['category'] > 0) {
+            //get latest event in that category
+            $events = EM_Events::get(array('category' => $atts['category'], 'limit' => 1, 'bookings' => true, 'status' => 1));
+            if (!empty($events)) {
+                $event_post_id = $events[0]->post_id;
+            }
+        } else if ($atts['event'] > 0) {
+            $event_post_id = $atts['event'];
+        }
+        if ($event_post_id > 0 && $atts['visibility_threshold'] > 0) {
+            //checked how many seats of total is booked
+            $report = self::get_seats_report($event_post_id);
+            $total  = 0;
+            $booked = 0;
+            foreach ($report as $seat) {
+                $total++;
+                if ($seat->status != 'free') {
+                    $booked++;
+                }
+            }
+            $booked_percent = round(($booked / $total) * 100);
+            if ($atts['visibility_threshold'] > 0 && $booked_percent < $atts['visibility_threshold']) {
+                $event_post_id = 0; //do not show chart if booking is below visibility treshold
+            }
+        }
+        if ($event_post_id > 0) {
+            $content .= '<div class="em-seatsio-tickets-chart" data-event="' . $event_post_id . '"><div id="seatsio-chart"></div></div>';
+        }
+        return $content;
     }
 
     public static function get_seats_report($post_id, $event_key = null)
@@ -287,7 +331,7 @@ class EM_Seatsio
             if ($validated === false) {
                 return false;
             }
-            $post_id = $EM_Location->post_id;
+            $post_id           = $EM_Location->post_id;
             $current_chart_key = $wpdb->get_var("SELECT chart_key FROM " . EM_SEATSIO_LOCATION . " WHERE post_id='" . $post_id . "' LIMIT 1");
             if (!empty($current_chart_key)) {
                 if ($current_chart_key != $chart_key) {
@@ -402,10 +446,10 @@ $wpdb->insert(EM_SEATSIO_LOCATION, array('post_id' => $post_id, 'chart_key' => $
     public static function ticket_edit_form_fields($col_count, $ticket)
     {
         if (!empty($ticket->ticket_id)) {
-            $meta_cat = isset($ticket->ticket_meta['seatsio_category']) ? $ticket->ticket_meta['seatsio_category'] : '';
+            $meta_cat   = isset($ticket->ticket_meta['seatsio_category']) ? $ticket->ticket_meta['seatsio_category'] : '';
             $meta_chart = isset($ticket->ticket_meta['seatsio_chart']) ? $ticket->ticket_meta['seatsio_chart'] : '';
             echo '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_category]" class="ticket_meta_category" value="' . $meta_cat . '">'
-            . '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_chart]" class="ticket_meta_chart" value="' . $meta_chart . '">';
+                . '<input type="hidden" name="em_tickets[' . $col_count . '][ticket_meta_seatsio_chart]" class="ticket_meta_chart" value="' . $meta_chart . '">';
         }
     }
 
