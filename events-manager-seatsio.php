@@ -29,6 +29,8 @@ require_once 'em-seatsio-event.php';
 require_once 'em-seatsio-booking.php';
 require_once 'em-seatsio-ticket-booking.php';
 
+require_once 'em-seatsio-discount.php';
+
 class EM_Seatsio
 {
     public static $seats = array();
@@ -210,6 +212,7 @@ class EM_Seatsio
      */
     public static function bookings_table_rows_col_seatsio_booths($val, $EM_Booking, $this, $csv, $object)
     {
+        $EM_Booking->get_event();
         global $wpdb;
         $seats = $wpdb->get_results("select * from " . EM_SEATSIO_BOOKING . " where booking_id = " . $EM_Booking->booking_id, OBJECT);
         if (empty($seats)) {

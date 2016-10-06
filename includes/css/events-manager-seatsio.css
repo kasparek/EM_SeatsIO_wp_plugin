@@ -107,3 +107,7 @@ a.close:hover {
     -moz-transition: color 1s ease;
     transition: color 1s ease;
 }
+
+.em-booking-form-details {
+    width: 100%;
+}

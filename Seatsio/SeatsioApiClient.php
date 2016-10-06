@@ -324,10 +324,9 @@ class SeatsioApiClient
         if (!empty($url)) {
             $this->request->url = $url;
         }
-
         $this->response = Unirest\Request::post($this->request->url, $this->request->headers, json_encode($this->request->data));
         if ($this->response->code !== 200) {
-            throw new Exception('postRequest - Exception: ' . (!empty($this->response->body) ? $this->response->body : $this->response->headers[0]));
+            throw new Exception('postRequest - Exception: ' . (!empty($this->response->body) ? json_encode($this->response->body) : $this->response->headers[0]));
         }
         return $this->response->body;
     }

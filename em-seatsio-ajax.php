@@ -117,11 +117,13 @@ class EM_Seatsio_ajax
                 $response->seats         = $client->report($event_key, 'byUuid');
                 $booked_by_user_category = array();
                 foreach ($response->seats as &$seat) {
-                    $ticket = EM_Seatsio::ticket_by_seatsio_category($event_id, $seat->categoryKey);
+                    if(!empty($seat->categoryKey)) {
+                        $ticket = EM_Seatsio::ticket_by_seatsio_category($event_id, $seat->categoryKey);
+                    }
                     if ($public_no_booking_chart === true) {
                         $seat->publicLabel = 'Not Booked Yet';
                     } else {
-                        if ($seat->status === 'blocked' || $seat->status === 'reservedByToken') {
+                        if (empty($ticket) && ($seat->status === 'blocked' || $seat->status === 'reservedByToken')) {
                             $seat->publicLabel = 'Reserved';
                         } else {
                             $seat->publicLabel = $ticket->ticket_name . ' ' . $seat->label . ' $' . number_format_i18n($ticket->ticket_price, 2);

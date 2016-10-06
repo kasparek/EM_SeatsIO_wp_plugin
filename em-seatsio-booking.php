@@ -116,7 +116,7 @@ class EM_Seatsio_booking
      * WP Admin
      * @param  boolean   $result success of previous action
      * @param  object    $EM_Booking
-     * @return boolean   Delete success
+     * @return boolean   Save success
      */
     public static function booking_save($result, $EM_Booking)
     {
